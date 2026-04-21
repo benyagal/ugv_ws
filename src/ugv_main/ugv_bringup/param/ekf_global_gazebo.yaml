@@ -1,0 +1,55 @@
+ekf_global_filter_node:
+    ros__parameters:
+        use_sim_time: true
+        # 50Hz: sűrűbb TF publikálás, kisebb rés két publ. között (20ms).
+        frequency: 50.0
+        sensor_timeout: 0.3
+        two_d_mode: true
+        # A TF timestamp-et 200ms-szel tolja a jövőbe.
+        # A Nav2 controller "most" kér lookup-ot: a TF-ben mindig lesz
+        # érvényes adat, mert az mindig kicsit előttejár.
+        transform_time_offset: 0.2
+        transform_timeout: 0.1
+        print_diagnostics: false
+        publish_tf: true
+        publish_acceleration: false
+        reset_on_time_jump: true
+
+        # A Gazebo diff-drive plugin adja az odom→base_footprint TF-et.
+        # Ez a node csak a map→odom TF-et publikálja (world_frame: map).
+        map_frame: map
+        odom_frame: odom
+        base_link_frame: base_footprint
+        world_frame: map
+
+        # A Gazebo diff-drive plugin /odom topicra publikál nav_msgs/Odometry-t.
+        odom0: /odom
+        odom0_config: [true,  true,  false,
+                       false, false, true,
+                       true,  false, false,
+                       false, false, true,
+                       false, false, false]
+        odom0_queue_size: 10
+        odom0_nodelay: false
+        # true: csak sebességet használ az /odom-ból, nem abszolút pozíciót.
+        # Ez megakadályozza, hogy az EKF korrelált mérésnek tekintse
+        # a Gazebo /odom-ot és az abból levezetett /uwb/pose-t.
+        odom0_differential: true
+        odom0_relative: false
+        odom0_pose_rejection_threshold: 20.0
+        odom0_twist_rejection_threshold: 1.542
+
+        # Az UWB szimulátor (vagy majd a valódi driver) geometry_msgs/PoseWithCovarianceStamped-et
+        # publikál /uwb/pose-ra. Csak x/y pozíciót veszünk be (2D mód).
+        pose0: /uwb/pose
+        pose0_config: [true,  true,  false,
+                       false, false, false,
+                       false, false, false,
+                       false, false, false,
+                       false, false, false]
+        pose0_queue_size: 10
+        pose0_nodelay: false
+        pose0_differential: false
+        pose0_relative: false
+        # Ha az UWB mérés túl nagy ugrást jelez (>5 Mahalanobis-távolság), eldobja.
+        pose0_rejection_threshold: 5.0

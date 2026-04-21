@@ -1,0 +1,13 @@
+# ROS2 colcon build outputs
+build/
+install/
+log/
+
+# Python bytecode
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+
+# Map files generálva a gyökérben (save_map script kimenet)
+/map.pgm
+/map.yaml
