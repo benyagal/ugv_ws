@@ -1,0 +1,272 @@
+================================================================================
+  ChickCheck2 – Mérnöki döntések és megfontolások
+  UWB lokalizáció a gyári kódtól a jelenlegi állapotig
+================================================================================
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  KIINDULÓHELYZET – MIT TARTALMAZOTT A GYÁRI KÓD?
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+A robot gyárilag LIDAR-alapú navigációra készült. A lokalizációs stack így
+nézett ki eredetileg:
+
+  Kerékodométria + IMU  →  helyi EKF  →  /odometry/local
+  LIDAR szkenner        →  SLAM (gmapping / cartographer)  →  térkép + pózlokalizáció
+  Helyi EKF + SLAM póz  →  globális EKF  →  /odometry/global  →  Nav2
+
+Ez egy bevált, jól dokumentált megközelítés – de csak akkor működik jól, ha a
+LIDAR látja a falakat és a tárgyakat.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  MIÉRT NEM MŰKÖDIK AZ EREDETI MEGKÖZELÍTÉS AZ ISTÁLLÓBAN?
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Az istálló különleges környezet. Három probléma merült fel egyszerre:
+
+  1. Por és intenzív fény: A csirkék mozgásától felkavart portól és a
+     természetes/mesterséges fény egyenetlen eloszlásától a LIDAR jele
+     megbízhatatlanná válik. A szkenner porban szórt szugarai hamis
+     visszaverődéseket okoznak.
+
+  2. Mozgó "akadályok": A csirkék élőlények. A LIDAR-alapú SLAM faltérképet
+     épít, de a csirkéket falként érzékeli, mivel sűrűn mozognak. Az így
+     felépített térkép folyamatosan változik és nem megbízható a globális
+     lokalizációhoz.
+
+  3. A LIDAR "csillapítása": Az istálló levegőtartalma (pára, por, ammónia)
+     különösen visszaveri a lézert. Tesztelésnél kiderült, hogy a szkenner
+     hatótávolsága drámaian lecsökkent a nyílt terephez képest.
+
+Döntés: A LIDAR-t ki kell váltani egy olyan technológiával, amelyre ezek
+a környezeti tényezők nem hatnak. Az UWB (Ultra-Wideband) rádió alapú
+pozicionálás pont erre alkalmas: falakba szerelt horgonyokból és a robootonn
+lévő tagtől ±2–10 cm pontossággal méri a pozíciót, és nem zavarja sem a por,
+sem a fény, sem az állatok.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  MIÉRT DWM1001C? – AZ ESZKÖZVÁLASZTÁS INDOKLÁSA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Több UWB megoldás létezik a piacon (Pozyx, Sewio, Decawave). A DWM1001C
+mellett szóló érvek:
+
+  - Ár: Olcsó, elérhető fejlesztői modul (Decawave/Qorvo gyártja)
+  - Nyílt forrás: Van hozzá ROS2 illesztőprogram (dwm1001_ros2), amit nem
+    kellett nulláról írni
+  - USB-soros csatlakozás: Egyszerűen beköthetó a Jetson USB portjára,
+    nem kell speciális busz (SPI, I2C) vagy extra kártya
+  - Ismert pontosság: Laboratóriumi körülmények között 1–2 cm, ipari
+    környezetben 5–10 cm – ez elegendő az istálló méreteihez (10×30 m)
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  1. FEJLESZTÉSI LÉPÉS – MIÉRT CSINÁLTUK ELŐSZÖR A SZIMULÁTORT?
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Amikor a fizikai robot még nem állt rendelkezésre (vagy az UWB horgonyok
+nem voltak kirakva), az EKF-et és a navigációs stacket nem lehetett valódi
+UWB adattal tesztelni. A szimulátor nélkül ez a fejlesztési folyamatot
+megakasztotta volna.
+
+A szimulátor lényege egyszerű: veszi a kerékodométriából számolt pozíciót,
+és "becsap" kissé, mintha egy valódi UWB szenzor visszajelzése lenne. Így
+az EKF ugyanolyan típusú üzenetet kap, mint majd élesben.
+
+Miért nem elég az egyszerű másolás (zaj nélkül)?
+
+  A zaj nélküli tesztelés megtévesztő: az EKF paraméterek (kovariancia,
+  rejection threshold) csak akkor viselkednek helyesen, ha a bemenet valódi
+  szenzorzajt tartalmaz. Ha a szimulált adat tökéletes, az EKF-et rá lehet
+  hangolni egy olyan értékkészletre, ami éles hardveren azonnal összeomlik.
+
+A szimulátorba három valósághű jelenséget is beleírtunk:
+
+  Gauss-zaj: A valódi UWB szenzor pontossága véges. A mérés körülbelül
+    normális eloszlású hibával rendelkezik a valós pozíció körül.
+    → 5 cm szórással szimulálva.
+
+  Dropout: Az UWB rendszer néha egy-egy mérést kihagy (akadály, impulzus
+    ütközés a levegőben). Ha ezt nem szimulálnánk, az EKF soha nem kapna
+    "lyukat" a bemenetben, és nem tudnánk tesztelni, hogy ez mit okoz.
+    → 5% valószínűséggel a csomópont nem publikál semmit azon a cikluson.
+
+  Outlier (kilógó mérés): Néha az UWB egy teljesen rossz pozíciót mér
+    (többszörös visszaverődés, multipath). Ezek a mérések tönkretehetik az
+    EKF-et, ha nem szűrjük ki őket.
+    → 3% valószínűséggel 1 méteres ugrást generálunk véletlenszerű irányba.
+
+Az outlier szűrés mechanizmusa:
+
+  Az EKF-ben van egy "pose0_rejection_threshold: 5.0" paraméter. Ez azt
+  jelenti: ha egy új UWB mérés Mahalanobis-távolsága a jelenlegi becsléshez
+  képest 5-nél nagyobb, az EKF figyelmen kívül hagyja azt a mérést.
+
+  A trükk: az outlier generálásakor NEM növeljük a kovariancát, csak a
+  pozíciót ugratjuk meg. Miért? Mert ha a kovariancát is növelnénk, az EKF
+  azt hinné, hogy a mérés "bizonytalan, de elfogadható", és az ugrást
+  beolvasztaná a becslésbe. Így viszont a mérés "nagy hibájú, kis bizonytalanságú"
+  lesz, ami magas Mahalanobis-távolságot eredményez → EKF kiszűri.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  2. FEJLESZTÉSI LÉPÉS – A VALÓDI HARDVER BEKÖTÉSE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Amikor a fizikai robot megérkezett, a következő kérdés merült fel:
+"Hogyan kötjük be az UWB TAG-et úgy, hogy az EKF-ben semmit ne kelljen
+átírni?"
+
+A gyári EKF konfigurációban ez a sor állt:
+  pose0: /uwb/pose
+  (geometry_msgs/PoseWithCovarianceStamped típusú üzenet)
+
+A dwm1001_ros2 könyvtár viszont nav_msgs/Odometry típusú üzeneteket
+publikál – más formátum, más topicnév. Az EKF ezeket közvetlenül nem tudja
+felhasználni a pose0 bemenetként.
+
+Három lehetséges megoldás volt:
+
+  A) Az EKF YAML-t átírni, hozzáadni odom1-ként az UWB Odometry topicot
+     → Ez megzavarta volna a meglévő konfigurációt, és a szimulátorral
+       való kompatibilitást is fel kellett volna adni.
+
+  B) A dwm1001_ros2 forrását módosítani, hogy PoseWithCovarianceStamped-et
+     publikáljon
+     → Külső repóban dolgozni kockázatos: frissítésnél elvesznek a módosítások,
+       és nehezebb a karbantartás.
+
+  C) Egy apró adapter csomópontot írni, ami fogadja az Odometry-t és
+     kiadja a PoseWithCovarianceStamped-et
+     → Nem nyúlunk hozzá sem az EKF-hez, sem a külső könyvtárhoz.
+       A szimulátorral és éles hardverrel is ugyanaz az interfész.
+
+A döntés: C megoldás (uwb_driver_node.py adapter csomópont).
+
+Ez az "interface adapter" tervezési minta: két különböző API között
+egy vékony közvetítőréteget húzunk, ahelyett hogy bármelyik végpontot
+módosítanánk.
+
+
+  A teljes hardveres adatfolyam:
+
+    [DWM1001C fizikai szenzor]
+          │ USB-soros (UART RTLS protokoll)
+          ▼
+    dwm1001_driver (active_tag node)
+          │ /uwb/point_raw  (PointStamped – nyers pozíció, dwm1001 koordinátarendszer)
+          ▼
+    dwm1001_transform node
+          │ /uwb/odometry  (Odometry – map koordinátarendszer, kovariancával)
+          ▼
+    uwb_driver_node (adapter)
+          │ /uwb/pose  (PoseWithCovarianceStamped – pontosan az EKF elvárása)
+          ▼
+    ekf_global_filter_node  →  /odometry/global  →  Nav2
+
+
+  Koordinátarendszer döntés (statikus TF):
+
+    A dwm1001 saját koordinátarendszerét (dwm1001 frame) be kellett kötni
+    a térképbe (map frame). A legegyszerűbb megoldás az lett volna, ha az
+    istálló sarkát a map origóval egyeztetjük – és éppen ezt tettük:
+    a horgonyok kirakásakor az istálló délkeleti sarkát definiáltuk (0, 0)
+    pontként, ami megegyezik a map frame origójával.
+
+    Ezért az eltolás nulla, a forgatás nulla – a statikus TF
+    (static_transform_publisher) csupa nullát publikál. Egyszerűbb
+    nem is lehetne, de fontos volt tudatosan meghozni ezt a döntést a
+    horgonyok kirakásakor, nem utólag.
+
+  Kovariancia döntés:
+
+    A dwm1001_transform csomópontban a position_cov paramétert 0.0002-re
+    állítottuk (ez a variancia, azaz a szórás négyzetgyöke ≈ 1.4 cm).
+    Ez a laborban mért pontosságon alapul. Ha élesben azt tapasztaljuk,
+    hogy az EKF túl sokat "ugrik" az UWB mérésekre, ezt az értéket
+    növelni kell → az EKF kevesebbet fog bízni az UWB-ben és többet az
+    odométriában.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  A LAUNCH FILE MEGKÖZELÍTÉS – EGYETLEN LAUNCH, KÉT MÓD
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Az összes szimulációs és hardveres csomópont egy launch fájlban van, és
+a use_uwb_sim:=true/false kapcsolóval választható el, melyik fut.
+
+Miért egy fájlban és nem kettőben?
+
+  Ha két külön launch fájl lett volna (pl. bringup_uwb_sim.launch.py és
+  bringup_uwb_hw.launch.py), akkor minden közös beállítást (EKF, IMU filter,
+  base node) duplán kellett volna karbantartani. Ha az egyikben változtatunk,
+  a másikban is el kell végezni – ez klasszikus forrása a hibáknak.
+
+  Az IfCondition/UnlessCondition mechanizmus lehetővé teszi, hogy pontosan
+  azok a csomópontok induljanak el, amelyekre szükség van, a többi pedig
+  szimplán nem indul el, de nem is dob hibát.
+
+A szimulátoros és hardveres pipeline interfész-kompatibilis:
+  Mindkettő ugyanoda publikál: /uwb/pose (PoseWithCovarianceStamped)
+  Az EKF erről nem tud, és nem is kell tudnia.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  AZ EKF KÉTSZINTES ARCHITEKTÚRA – MIÉRT VAN KÉT EKF?
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+A robot két párhuzamos EKF (Kiterjesztett Kalman-szűrő) csomópontot futtat.
+Ez a gyári architektúra, nem volt szükség módosítani, de megértése fontos.
+
+  Helyi EKF (ekf_local_filter_node):
+    Bemenetek: kerékodométria (/odom_raw) + IMU (/imu/data)
+    Kimenet:   /odometry/local  (odom → base_footprint TF)
+    Feladat:   Rövid távú, gyors, folyamatos becslés. Az odométria
+               folyamatosan kúszik (drift), az IMU adja a szögsebességet.
+               Ez a "mennyi ideig haladtam milyen irányba" becslés.
+
+  Globális EKF (ekf_global_filter_node):
+    Bemenetek: /odometry/local + /uwb/pose
+    Kimenet:   /odometry/global  (map → odom TF)
+    Feladat:   Az UWB "visszarántja" a robotot a valós pozícióba, amikor
+               a kerékodométria eltévedt. Ez a "hol vagyok a térképen"
+               becslés.
+
+Miért kell a két szint?
+
+  Az UWB mérési frekvenciája alacsony (5–10 Hz) és zajosabb. A kerékodométria
+  gyorsabb (50–100 Hz) és rövidtávon pontosabb. Ha mindet egy EKF-be raknánk,
+  az alacsony frekvenciájú UWB mérések és a magas frekvenciájú odométria
+  nehezen hangolható, numerikusan instabil konfigurációt eredményeznének.
+  A kétszintes megközelítés elválasztja a "gyors mozgáskövetést" a
+  "globális pozíciókorrekciótól".
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ÖSSZEFOGLALÁS – A VÁLTOZTATÁSOK LOGIKAI SORRENDJE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Gyári állapot:
+    LIDAR + SLAM alapú lokalizáció, nem alkalmas istállói körülményre
+
+  ↓ Döntés: UWB-re váltás (DWM1001C)
+
+  1. lépés: Szimulátor írása (uwb_simulator.py)
+    Cél: Az EKF és a navigáció tesztelhető legyen fizikai hardver nélkül
+    Tanulság: A szimulátor valósághű zajt és kieséseket szimulál,
+              különben az EKF hamisan jó paraméterekre hangolódna be
+
+  2. lépés: Valódi hardver bekötése (uwb_driver_node.py + launch módosítás)
+    Cél: A DWM1001C fizikailag csatlakoztatható, a szoftver ne kelljen
+         átírni semmit az EKF oldalán
+    Megoldás: Adapter csomópont – bridgeli a dwm1001_ros2 formátumát
+              az EKF által elvárt formátumra
+    Koordinátarendszer: tudatos döntés a helyszíni kirakáskor, nem utólag
+
+  Jelenlegi állapot:
+    Egyetlen launch fájl, use_uwb_sim kapcsolóval,
+    szimulációban és éles hardveren azonos EKF konfiguráció és topic interfész
+
+================================================================================

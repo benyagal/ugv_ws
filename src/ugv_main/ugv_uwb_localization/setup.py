@@ -26,6 +26,7 @@ setup(
     entry_points={
         'console_scripts': [
             'uwb_simulator = ugv_uwb_localization.uwb_simulator:main',
+            'uwb_driver = ugv_uwb_localization.uwb_driver_node:main',
         ],
     },
 )

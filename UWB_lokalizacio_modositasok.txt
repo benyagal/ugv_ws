@@ -1,0 +1,294 @@
+================================================================================
+  ChickCheck2 – UWB Lokalizáció: Kódmódosítások Dokumentációja
+================================================================================
+  Dátum: 2026-05-22
+  ROS2 verzió: Humble
+  Platform: Jetson Orin Nano (Docker: ugv_jetson_ros_humble)
+================================================================================
+
+
+────────────────────────────────────────────────────────────────────────────────
+  1. MÓDOSÍTÁS – UWB SZIMULÁCIÓS LOKALIZÁCIÓ IMPLEMENTÁLÁSA
+────────────────────────────────────────────────────────────────────────────────
+
+A cél az lenne akkor most, hogy a gazebo-ban futtatni a uwb lokalizációval és TEB local planner-el a már felépített 2D-s map-et használva. Tehát hasonlóan kéne működni mint a meglévő implementációknál:
+ros2 launch ugv_gazebo bringup.launch.py
+Majd ros2 launch ugv_gazebo nav.launch.py use_localplan:=teb
+Azzal a különbséggel, hogy természetesen az uwb lokalizációt használjuk vagyis LIDAR-t természetesen nem.
+
+Amit létrehoztam
+ugv_bringup/param/ekf_global_gazebo.yaml
+A Gazebo-specifikus global EKF konfiguráció. A különbség az eredeti ekf_global.yaml-hoz képest:
+
+odom0: /odom — a Gazebo diff-drive plugin közvetlenül ide publikál
+use_sim_time: true — Gazebo szimulációs időt használ
+Nincs local EKF réteg — a Gazebo maga adja az odom → base_footprint TF-et, ezért nincs ütközés
+ugv_gazebo/launch/nav/nav_uwb.launch.py
+A nav.launch.py párja UWB lokalizációval. Az AMCL/EMCL helyett:
+
+global EKF adja a map → odom TF-et
+map_server szolgáltatja a pre-built térképet a costmap static layer-nek
+navigation_launch.py (AMCL nélküli Nav2) fut TEB plannerrel
+A meglévő rtabmap_teb.yaml-t használja, semmi sem változott benne
+
+A három probléma és a javítás:
+Extrapolation error → transform_time_offset: 0.1 az EKF-ben (kicsit a jövőbe tolja a TF publikálást)
+EKF ugrálás → odom0_differential: true — az EKF csak sebességet vesz a /odom-ból, nem abszolút pozíciót (ami korrelál az UWB-vel)
+Lidar costmap → új Nav2 param fájl /scan nélkül
+
+1. Extrapolation error → transform_time_offset: 0.1
+Az EKF a map→odom TF-et egy kicsit a múltba publikálta, a Nav2 controller meg épp kicsikét a jövőbe kért egy lookup-ot. A 0.1 másodperces eltolással az EKF kicsit előre tolja a TF publikálást, így a Nav2 mindig talál érvényes adatot ugv_bringup/param/ekf_global_gazebo.yaml.
+
+2. Robot ugrál → odom0_differential: true
+Az UWB szimulátor a Gazebo /odom-ból olvassa a robot pozícióját, majd zajt adva visszapublikálja /uwb/pose-ra. A global EKF egyszerre kapta:
+
+/odom → abszolút x,y pozíció
+/uwb/pose → ugyanaz a pozíció + zaj
+Ez korreláció — az EKF azt hitte, két független mérés van, de valójában ugyanabból az adatból jöttek. Ezért ugrált. A differential: true beállítással az EKF csak sebességet vesz ki az /odom-ból, abszolút pozíciót nem. Az abszolút pozíciót kizárólag a /uwb/pose adja — ahogy kell.
+
+3. Lidar a costmapben → uwb_teb_gazebo.yaml
+Az rtabmap_teb.yaml costmapjei /scan topicot figyeltek. Egy új Nav2 param fájl (ugv_gazebo/param/uwb_teb_gazebo.yaml) tartalmazza ugyanazokat a TEB beállításokat, de:
+
+Cél:
+  Az EKF (ekf_global_filter_node) valódi UWB hardver nélkül is tesztelhető
+  legyen. A szimulátor a /odometry/local odométria alapján véletlen zajjal
+  terhelt, de nagyjából helyes /uwb/pose üzeneteket generál.
+
+Érintett fájlok:
+  - ugv_ws/src/ugv_main/ugv_uwb_localization/ugv_uwb_localization/
+      uwb_simulator.py                           [ÚJ fájl]
+  - ugv_ws/src/ugv_main/ugv_uwb_localization/setup.py            [MÓDOSÍTVA]
+  - ugv_ws/src/ugv_main/ugv_bringup/launch/
+      bringup_localization_uwb.launch.py                         [MÓDOSÍTVA]
+
+Részletek:
+
+  1.1  uwb_simulator.py  (új fájl)
+  ─────────────────────────────────
+  Feladat: Feliratkozik a /odometry/local topicra (Odometry), és abból
+           PoseWithCovarianceStamped üzenetet publikál a /uwb/pose topicra,
+           kis Gauss-zajt adva az x,y pozícióhoz (±1-2 cm szórású fehér zaj).
+           Publikusálja a /uwb/status (String → "ok") diagnosztika topicot is.
+
+  Paraméterek (ROS2 deklarált):
+    source_topic  : /odometry/local   (figyelelt odométria topic)
+    pose_topic    : /uwb/pose         (publikált UWB adat)
+    status_topic  : /uwb/status       (diagnosztika)
+    frame_id      : map
+    noise_stddev  : 0.015             (méter, ≈ 1.5 cm szórás)
+
+  ROS2 entry point neve: uwb_simulator
+
+  1.2  setup.py  (módosítás)
+  ───────────────────────────
+  Hozzáadott sor az entry_points → console_scripts blokkhoz:
+
+    'uwb_simulator = ugv_uwb_localization.uwb_simulator:main',
+
+  1.3  bringup_localization_uwb.launch.py  (módosítás)
+  ──────────────────────────────────────────────────────
+  Hozzáadott launch argumentum:
+
+    use_uwb_sim   (default: 'true')
+      → true  : szimulátor fut, valódi hardver csomópontok nem indulnak
+      → false : valódi DWM1001C hardver csomópontok indulnak (ld. 2. módosítás)
+
+  Hozzáadott csomópont:
+
+    uwb_simulator_node
+      condition  : IfCondition(use_uwb_sim)
+      package    : ugv_uwb_localization
+      executable : uwb_simulator
+      paraméterek:
+        source_topic → /odometry/local
+        pose_topic   → /uwb/pose
+        status_topic → /uwb/status
+        frame_id     → map
+
+  Az EKF konfiguráció (ekf_global.yaml) NEM változott:
+    pose0: /uwb/pose   ← a szimulátor erre a topicra publikusál
+
+Indítás szimulátorral:
+  ros2 launch ugv_bringup bringup_localization_uwb.launch.py use_uwb_sim:=true
+
+
+────────────────────────────────────────────────────────────────────────────────
+  2. MÓDOSÍTÁS – VALÓDI DWM1001C HARDVER LOKALIZÁCIÓ IMPLEMENTÁLÁSA
+────────────────────────────────────────────────────────────────────────────────
+
+Cél:
+  A fizikai robot DWM1001C UWB TAG-jét (USB-soros: /dev/ttyACM0) bekötni a
+  meglévő Nav2 / EKF pipeline-ba. Külső repo: the-hive-lab/dwm1001_ros2.
+
+Előfeltétel (manuálisan elvégzett lépések):
+  - dwm1001_ros2 repo klónozva:
+      ugv_ws/src/ugv_else/dwm1001_ros2/
+      (csomagok: dwm1001_driver, dwm1001_transform)
+      Találtam egy github repo-t ami segíthet a DWM1001C integrálásában: https://github.com/the-hive-lab/dwm1001_ros2.git
+  - pydwm1001 pip-csomag telepítve:
+      ugv_ws/venv/  (virtuális környezet)
+  - Packages buildelve: colcon build --packages-select dwm1001_driver
+                                                       dwm1001_transform
+                                                       ugv_uwb_localization
+
+Érintett fájlok:
+  - ugv_ws/src/ugv_main/ugv_uwb_localization/ugv_uwb_localization/
+      uwb_driver_node.py                             [ÚJ fájl]
+  - ugv_ws/src/ugv_main/ugv_uwb_localization/setup.py            [MÓDOSÍTVA]
+  - ugv_ws/src/ugv_main/ugv_bringup/launch/
+      bringup_localization_uwb.launch.py                         [MÓDOSÍTVA]
+
+Részletek:
+
+  2.1  uwb_driver_node.py  (új fájl)
+  ────────────────────────────────────
+  Feladat: Adapter csomópont – a dwm1001_transform által publikált Odometry
+           üzenetet átalakítja PoseWithCovarianceStamped formátumra, amelyet
+           az EKF elvár a /uwb/pose topicon.
+
+  Miért szükséges az adapter?
+    A dwm1001_transform csomag nav_msgs/Odometry-t publikál.
+    Az ekf_global_filter_node a pose0 inputon csak
+    geometry_msgs/PoseWithCovarianceStamped-et fogad.
+    → Az adapter bridges ezt a két interfészt anélkül, hogy az EKF YAML-t
+      módosítani kellene, és a szimulátorral való kompatibilitás is megmarad.
+
+  Feliratkozás:  /uwb/odometry    (nav_msgs/Odometry)
+  Publikálás:    /uwb/pose        (geometry_msgs/PoseWithCovarianceStamped)
+                 /uwb/status      (std_msgs/String → "ok")
+
+  Kovariancia átvitele:
+    Az msg.pose.covariance mátrixot (3×3 pozíció blokk) a dwm1001_transform
+    tölti ki a position_cov paraméter alapján (ld. 2.3). Az adapter ezt
+    változtatás nélkül másolja az out.pose.covariance mezőbe.
+
+  z koordináta: mindig 0.0 (two_d_mode=true az EKF-ben)
+  Orientáció:   w=1.0 (UWB nem mér szöget, quaternion = identity)
+
+  ROS2 entry point neve: uwb_driver
+
+  2.2  setup.py  (módosítás)
+  ───────────────────────────
+  Hozzáadott sor az entry_points → console_scripts blokkhoz:
+
+    'uwb_driver = ugv_uwb_localization.uwb_driver_node:main',
+
+  2.3  bringup_localization_uwb.launch.py  (módosítás)
+  ──────────────────────────────────────────────────────
+  Hozzáadott launch argumentumok:
+
+    uwb_serial_port   (default: '/dev/ttyACM0')
+      → A DWM1001C USB-soros portja a Jetsonen
+
+    uwb_tag_id        (default: 'uwb_tag')
+      → A TAG azonosítója (a dwm1001_driver erre remappeli a kimeneti topicot)
+
+  Hozzáadott csomópontok (mind UnlessCondition(use_uwb_sim)):
+
+    uwb_static_tf_node
+      package    : tf2_ros
+      executable : static_transform_publisher
+      Feladat    : Statikus TF: dwm1001 → map (identity transform)
+      Magyarázat : A DWM1001 origó (0,0) = istálló DK sarok = map frame origó,
+                   ezért eltolás/forgatás nem szükséges.
+      arguments  : ['0', '0', '0', '0', '0', '0', 'map', 'dwm1001']
+
+    uwb_active_tag_node
+      package    : dwm1001_driver
+      executable : active_tag
+      Feladat    : Soros porton olvassa a DWM1001C TAG pozícióját (UART RTLS),
+                   PointStamped-et publikál.
+      paraméterek:
+        serial_port → /dev/ttyACM0  (launch arg)
+        tag_id      → uwb_tag       (launch arg)
+        samples     → 3             (átlagolás, pontosság javítása)
+      remapping  : ~/output/uwb_tag → /uwb/point_raw
+
+    uwb_transform_node
+      package    : dwm1001_transform
+      executable : dwm1001_transform
+      Feladat    : PointStamped (dwm1001 frame) → Odometry (map frame)
+                   Kiszámítja a pozíciót a map TF segítségével, kovariancát
+                   a position_cov paraméterből veszi.
+      paraméterek:
+        position_cov : [0.0002, 0.0, 0.0,
+                        0.0, 0.0002, 0.0,
+                        0.0, 0.0, 0.0002]
+                       (variancia = 0.0002 m² → szórás ≈ 1.4 cm, labor mérés)
+      remapping  : input/tag_position         → /uwb/point_raw
+                   ~/output/odometry/ips      → /uwb/odometry
+
+    uwb_driver_node
+      package    : ugv_uwb_localization
+      executable : uwb_driver
+      Feladat    : Adapter (ld. 2.1): /uwb/odometry → /uwb/pose
+      paraméterek:
+        input_topic  → /uwb/odometry
+        pose_topic   → /uwb/pose
+        status_topic → /uwb/status
+        frame_id     → map
+
+Teljes topic pipeline (valódi hardver):
+
+  [DWM1001C tag, /dev/ttyACM0]
+        │  UART RTLS
+        ▼
+  active_tag  ──►  /uwb/point_raw  (PointStamped, dwm1001 frame)
+        │
+        ▼
+  dwm1001_transform  ──►  /uwb/odometry  (Odometry, map frame)
+        │
+        ▼
+  uwb_driver_node  ──►  /uwb/pose   (PoseWithCovarianceStamped, map frame)
+                    ──►  /uwb/status (String, "ok")
+        │
+        ▼
+  ekf_global_filter_node  ──►  /odometry/global  (fúzió: odom + UWB)
+
+Indítás valódi hardverrel:
+  ros2 launch ugv_bringup bringup_localization_uwb.launch.py \
+      use_uwb_sim:=false \
+      uwb_serial_port:=/dev/ttyACM0 \
+      uwb_tag_id:=uwb_tag
+
+A szimulátor és a hardver csomópontok KIZÁRJÁK egymást (IfCondition /
+UnlessCondition alapján), az EKF /uwb/pose topicja mindkét esetben ugyanaz.
+
+
+────────────────────────────────────────────────────────────────────────────────
+  3. EKF KONFIGURÁCIÓ (változatlan, csak referencia)
+────────────────────────────────────────────────────────────────────────────────
+
+Fájl: ugv_ws/src/ugv_main/ugv_bringup/param/ekf_global.yaml
+
+  Releváns beállítások:
+    odom0: /odometry/local              (kerékodométria + IMU fúzió)
+    pose0: /uwb/pose                    (UWB pozíció input)
+    pose0_config: [true, true, false,   (x, y használva; szög nem)
+                   false, false, false,
+                   ...]
+    pose0_rejection_threshold: 5.0      (Mahalanobis-távolság küszöb,
+                                         ugróugrást szűri ki)
+    two_d_mode: true
+    world_frame: map
+    publish_tf: true                    (map → odom TF publikálás)
+
+
+────────────────────────────────────────────────────────────────────────────────
+  4. ÉRINTETT CSOMAGOK ÖSSZEFOGLALÁSA
+────────────────────────────────────────────────────────────────────────────────
+
+  ugv_uwb_localization   (ugv_ws/src/ugv_main/ugv_uwb_localization/)
+    - uwb_simulator.py     : szimulációs UWB → /uwb/pose
+    - uwb_driver_node.py   : valódi hardver adapter (Odometry → PoseWithCov)
+
+  ugv_bringup            (ugv_ws/src/ugv_main/ugv_bringup/)
+    - bringup_localization_uwb.launch.py : mindkét módot kezeli
+
+  dwm1001_driver         (ugv_ws/src/ugv_else/dwm1001_ros2/dwm1001_driver/)
+    - active_tag           : soros port olvasás, PointStamped publikálás
+
+  dwm1001_transform      (ugv_ws/src/ugv_else/dwm1001_ros2/dwm1001_transform/)
+    - dwm1001_transform    : PointStamped → Odometry TF transzformáció
+
+================================================================================

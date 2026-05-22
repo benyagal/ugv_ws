@@ -81,6 +81,15 @@ def generate_launch_description():
             {'pose_topic': '/uwb/pose'},
             {'status_topic': '/uwb/status'},
             {'frame_id': 'map'},
+            # 1Hz: az EKF csak másodpercenként kap UWB korrekciót.
+            # Ritkább korrekció = simább mozgás RViz-ben.
+            {'publish_rate': 1.0},
+            # 0.02m tényleges zaj: az EKF max ±2cm-t korrigál mérésenként.
+            # A variancia (0.02²=0.0004) kicsi marad, ezért az outlier szűrés
+            # (Mahalanobis = 1.0/0.02 = 50 >> 5.0 küszöb) teljesen működik.
+            {'position_noise_stddev': 0.02},
+            # 0.5% outlier valószínűség: ritkábban keletkezik nagy ugrás.
+            {'outlier_probability': 0.005},
         ]
     )
 
