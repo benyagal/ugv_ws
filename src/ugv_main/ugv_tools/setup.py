@@ -25,7 +25,10 @@ setup(
         'console_scripts': [
             'keyboard_ctrl = ugv_tools.keyboard_ctrl:main',
             'joy_ctrl = ugv_tools.joy_ctrl:main',
-            'behavior_ctrl = ugv_tools.behavior_ctrl:main'
+            'behavior_ctrl = ugv_tools.behavior_ctrl:main',
+            'localization_test = ugv_tools.localization_test:main',
+            'localization_accuracy_test = ugv_tools.localization_accuracy_test:main',
+            'localization_drive_test = ugv_tools.localization_drive_test:main',
         ],
     },
 )
