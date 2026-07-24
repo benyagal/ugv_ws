@@ -2,3 +2,5 @@ pyserial
 flask
 mediapipe
 requests
+smbus2
+Jetson.GPIO
