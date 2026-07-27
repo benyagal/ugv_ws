@@ -157,7 +157,7 @@ private:
 
         // Calculate average distance and change in heading
         float dxy_ave = (dright + dleft) / 2.0;
-        float dth = (dright - dleft) / 0.175;
+        float dth = (dleft - dright) / 0.175;
 
         // Compute linear and angular velocities
         vx = dxy_ave / dt;

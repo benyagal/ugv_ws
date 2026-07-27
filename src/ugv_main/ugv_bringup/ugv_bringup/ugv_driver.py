@@ -41,7 +41,10 @@ class UgvDriver(Node):
     # Callback for processing velocity commands
     def cmd_vel_callback(self, msg):
         linear_velocity = msg.linear.x
-        angular_velocity = msg.angular.z
+        # NOTE: physical rotation direction was found reversed vs. cmd_vel
+        # intent after the motor swap (cannot be corrected in firmware/wiring),
+        # so we invert the sign here in software before sending it on.
+        angular_velocity = -msg.angular.z
 
         # Apply minimum threshold to angular velocity if linear velocity is zero
         if linear_velocity == 0:

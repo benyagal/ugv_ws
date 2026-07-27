@@ -148,7 +148,7 @@ private:
         pre_odr = now_odr;
 
         float dxy_ave = (dright + dleft) / 2.0;
-        float dth = (dright - dleft) / 0.175;
+        float dth = (dleft - dright) / 0.175;
         vx = dxy_ave / dt;
         vw = dth / dt;
 
