@@ -64,6 +64,18 @@ def generate_launch_description():
         description='DWM1001 tag ID label (used for topic name matching)'
     )
 
+    use_map_server_arg = DeclareLaunchArgument(
+        'use_map_server',
+        default_value='true',
+        description='Whether to serve the pre-built 2D map for RViz visualization (no AMCL - visual reference only)'
+    )
+
+    map_arg = DeclareLaunchArgument(
+        'map',
+        default_value=os.path.join(get_package_share_directory('ugv_nav'), 'maps', 'map.yaml'),
+        description='Path to the pre-built 2D map YAML file'
+    )
+
     robot_state_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(get_package_share_directory('ugv_description'), 'launch', 'display.launch.py')
@@ -218,6 +230,33 @@ def generate_launch_description():
         ],
     )
 
+    # Pre-built 2D map, served purely for RViz visual reference (no AMCL -
+    # localization still comes entirely from the UWB+odometry EKF chain above).
+    map_server_node = Node(
+        condition=IfCondition(LaunchConfiguration('use_map_server')),
+        package='nav2_map_server',
+        executable='map_server',
+        name='map_server',
+        output='screen',
+        parameters=[
+            {'use_sim_time': LaunchConfiguration('use_sim_time')},
+            {'yaml_filename': LaunchConfiguration('map')},
+        ]
+    )
+
+    lifecycle_manager_map_node = Node(
+        condition=IfCondition(LaunchConfiguration('use_map_server')),
+        package='nav2_lifecycle_manager',
+        executable='lifecycle_manager',
+        name='lifecycle_manager_map',
+        output='screen',
+        parameters=[
+            {'use_sim_time': LaunchConfiguration('use_sim_time')},
+            {'autostart': True},
+            {'node_names': ['map_server']},
+        ]
+    )
+
     return LaunchDescription([
         pub_odom_tf_arg,
         use_rviz_arg,
@@ -228,6 +267,8 @@ def generate_launch_description():
         use_uwb_sim_arg,
         uwb_serial_port_arg,
         uwb_tag_id_arg,
+        use_map_server_arg,
+        map_arg,
         robot_state_launch,
         bringup_node,
         imu_complementary_filter_node,
@@ -241,4 +282,6 @@ def generate_launch_description():
         uwb_transform_node,
         uwb_driver_node,
         global_ekf_node,
+        map_server_node,
+        lifecycle_manager_map_node,
     ])
