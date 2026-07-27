@@ -39,4 +39,7 @@ ekf_global_filter_node:
         pose0_nodelay: false
         pose0_differential: false
         pose0_relative: false
-        pose0_rejection_threshold: 5.0
+        # Widened from 5.0: with the tight UWB covariance, 5 sigma was only
+        # ~7cm - real drift between the ~8-10s UWB updates regularly exceeded
+        # that, so corrections were silently rejected as outliers.
+        pose0_rejection_threshold: 15.0

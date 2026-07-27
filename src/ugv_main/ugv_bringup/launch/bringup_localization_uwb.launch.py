@@ -206,9 +206,12 @@ def generate_launch_description():
         name='dwm1001_transform',
         output='screen',
         parameters=[
-            # 1-2cm accuracy in lab → variance = (0.015)^2 ≈ 0.0002
+            # More realistic than the initial 1-2cm lab estimate: with only
+            # 4 anchors in a small workspace, real accuracy is closer to
+            # 5-10cm. A too-tight covariance made the EKF's outlier rejection
+            # (pose0_rejection_threshold) throw away most real corrections.
             # Layout: [xx, xy, xz, yx, yy, yz, zx, zy, zz]
-            {'position_cov': [0.0002, 0.0, 0.0, 0.0, 0.0002, 0.0, 0.0, 0.0, 0.0002]},
+            {'position_cov': [0.01, 0.0, 0.0, 0.0, 0.01, 0.0, 0.0, 0.0, 0.01]},
         ],
         remappings=[
             ('input/tag_position', '/uwb/point_raw'),
