@@ -112,8 +112,11 @@ class ugv_bringup(Node):
 
     # Main loop for reading sensor feedback and publishing it to ROS topics
     def feedback_loop(self):
-        self.base_controller.feedback_data()
-        if self.base_controller.base_data["T"] == 1001:  # Check if the feedback type is correct
+        result = self.base_controller.feedback_data()
+        # Only publish if a new, valid reading was actually received this cycle.
+        # Otherwise we would republish stale data with a fresh timestamp, which
+        # gets fed to the IMU filter as if it were a brand new measurement.
+        if result is not None and self.base_controller.base_data["T"] == 1001:
             self.publish_imu_data_raw()  # Publish IMU raw data
             self.publish_imu_mag()  # Publish magnetic field data
             self.publish_odom_raw()  # Publish odometry data
