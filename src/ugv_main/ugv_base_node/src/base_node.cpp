@@ -179,7 +179,10 @@ private:
         }
 
         // Use IMU yaw if available
-        yaw = imu_yaw != 0 ? imu_yaw : odom_yaw;
+        // NOTE: IMU-derived yaw has been found unreliable (frozen/stuck readings
+        // from the ICM20948 on this hardware) — rely purely on wheel-odometry-based
+        // yaw until a working alternative heading source (e.g. UWB) is in place.
+        yaw = odom_yaw;
     }
 
     // Function to publish odometry data and broadcast transformation
