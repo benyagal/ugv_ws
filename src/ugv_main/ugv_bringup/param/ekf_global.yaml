@@ -16,11 +16,18 @@ ekf_global_filter_node:
         base_link_frame: base_footprint
         world_frame: map
 
+        # Wheel odometry fusion temporarily disabled (all fields false): the
+        # base chassis track width / scale hasn't been re-verified since the
+        # rebuild, so its position estimate isn't trustworthy yet. UWB alone
+        # (once its own accuracy/update rate is improved) is currently more
+        # reliable. Re-enable (restore the [true,true,false / false,false,
+        # true / true,false,false / false,false,true / false,false,false]
+        # config below) once the wheel odometry has been properly tuned.
         odom0: /odometry/local
-        odom0_config: [true, true, false,
-                       false, false, true,
-                       true, false, false,
-                       false, false, true,
+        odom0_config: [false, false, false,
+                       false, false, false,
+                       false, false, false,
+                       false, false, false,
                        false, false, false]
         odom0_queue_size: 10
         odom0_nodelay: false

@@ -179,13 +179,14 @@ def generate_launch_description():
         package='tf2_ros',
         executable='static_transform_publisher',
         name='dwm1001_to_map_tf',
-        # Recalibrated using 3 reference points measured via RViz "Publish
+        # Recalibrated using 4 reference points measured via RViz "Publish
         # Point" (map frame) + /uwb/point_raw (dwm1001 frame), fitted with
-        # least squares (2D Procrustes). Residual error ~14-28cm across all
-        # 3 points - much more consistent than the earlier GIMP-pixel-based
-        # estimate, which disagreed wildly (~80 degrees) between point pairs.
+        # least squares (2D Procrustes). Residual error ~9-17cm across all
+        # 4 points - point 1 was remeasured after letting the UWB position
+        # settle (previous quick reading was inaccurate), and a 4th point
+        # was added for extra robustness.
         # x, y, z, yaw, pitch, roll, parent_frame, child_frame
-        arguments=['0.868', '-0.982', '0', '1.896', '0', '0', 'map', 'dwm1001'],
+        arguments=['0.834', '-1.207', '0', '1.739', '0', '0', 'map', 'dwm1001'],
         output='screen',
     )
 
