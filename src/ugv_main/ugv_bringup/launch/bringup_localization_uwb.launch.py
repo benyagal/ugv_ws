@@ -179,7 +179,12 @@ def generate_launch_description():
         package='tf2_ros',
         executable='static_transform_publisher',
         name='dwm1001_to_map_tf',
-        arguments=['0', '0', '0', '0', '0', '0', 'map', 'dwm1001'],
+        # Calibrated from 2 reference points (room corners) measured in both
+        # the map frame (from map.pgm pixel coordinates) and the UWB anchor
+        # frame. NOT the identity transform - the anchor origin does not
+        # coincide with the map's SLAM-built coordinate origin.
+        # x, y, z, yaw, pitch, roll, parent_frame, child_frame
+        arguments=['-0.785', '0.52', '0', '-1.4835', '0', '0', 'map', 'dwm1001'],
         output='screen',
     )
 
