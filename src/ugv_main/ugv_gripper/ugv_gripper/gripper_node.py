@@ -220,8 +220,27 @@ class GripperNode(Node):
     # Main tick (replaces Arduino loop())
     # =====================================================
     def update(self):
-        self.update_continuous_servo()
-        self.update_dc_motor()
+        try:
+            self.update_continuous_servo()
+            self.update_dc_motor()
+        except OSError as e:
+            self.handle_i2c_failure(e)
+
+    def handle_i2c_failure(self, error: Exception):
+        # A persistent I2C bus fault (e.g. repeated "arbitration lost") should
+        # never be allowed to crash the whole node - that leaves the motor/
+        # relay in whatever state they were and requires a manual restart.
+        # Instead, log it and force everything to a safe stopped state; the
+        # next command will retry the I2C bus from a clean slate.
+        self.get_logger().error(f'I2C bus failure, stopping gripper: {error}')
+        self.servo1_state = SERVO1_IDLE
+        self.home_seen = False
+        self.motor_state = MOTOR_IDLE
+        try:
+            self.motor_stop()
+        except OSError:
+            pass
+        self.log('I2C ERROR - STOPPED')
 
     def update_continuous_servo(self):
         if self.servo1_state == SERVO1_IDLE:
@@ -291,20 +310,23 @@ class GripperNode(Node):
             self.log('System Busy')
             return
 
-        if command == 'in':
-            self.command_in()
-        elif command == 'out':
-            self.command_out()
-        elif command == 'up':
-            self.command_up()
-        elif command == 'down':
-            self.command_down()
-        elif command == 'push':
-            self.command_push()
-        elif command == 'pull':
-            self.command_pull()
-        else:
-            self.log(f'Unknown command: {command}')
+        try:
+            if command == 'in':
+                self.command_in()
+            elif command == 'out':
+                self.command_out()
+            elif command == 'up':
+                self.command_up()
+            elif command == 'down':
+                self.command_down()
+            elif command == 'push':
+                self.command_push()
+            elif command == 'pull':
+                self.command_pull()
+            else:
+                self.log(f'Unknown command: {command}')
+        except OSError as e:
+            self.handle_i2c_failure(e)
 
     def destroy_node(self):
         self.servo1_stop()

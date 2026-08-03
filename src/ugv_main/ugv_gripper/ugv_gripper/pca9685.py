@@ -22,17 +22,36 @@ MODE1_RESTART = 0x80
 
 
 class PCA9685:
+    # The Jetson's I2C bus occasionally reports transient errors (e.g.
+    # "arbitration lost", seen in dmesg as tegra-i2c ... un-recovered
+    # arbitration lost), most likely from electrical noise from the
+    # nearby relay/motor switching. A short retry usually succeeds on
+    # the next attempt, so we retry a few times before giving up.
+    I2C_RETRY_ATTEMPTS = 3
+    I2C_RETRY_DELAY = 0.01
+
     def __init__(self, bus_num: int, address: int = PCA9685_ADDRESS):
         self.bus = smbus2.SMBus(bus_num)
         self.address = address
         self._write8(MODE1, 0x00)
         time.sleep(0.005)
 
+    def _retry(self, func, *args):
+        last_error = None
+        for attempt in range(self.I2C_RETRY_ATTEMPTS):
+            try:
+                return func(*args)
+            except OSError as e:
+                last_error = e
+                if attempt < self.I2C_RETRY_ATTEMPTS - 1:
+                    time.sleep(self.I2C_RETRY_DELAY)
+        raise last_error
+
     def _write8(self, reg: int, value: int):
-        self.bus.write_byte_data(self.address, reg, value & 0xFF)
+        self._retry(self.bus.write_byte_data, self.address, reg, value & 0xFF)
 
     def _read8(self, reg: int) -> int:
-        return self.bus.read_byte_data(self.address, reg)
+        return self._retry(self.bus.read_byte_data, self.address, reg)
 
     def set_pwm_freq(self, freq_hz: float):
         prescale_val = int(round(25000000.0 / (4096 * freq_hz)) - 1)
