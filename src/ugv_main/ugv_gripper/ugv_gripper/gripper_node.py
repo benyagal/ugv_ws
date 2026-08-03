@@ -256,7 +256,7 @@ class GripperNode(Node):
 
         if self.servo1_state == SERVO1_OUT:
             # INPUT_PULLUP, trigger when HIGH (same as the Arduino sketch)
-            if GPIO.input(self.home_switch_pin) == GPIO.LOW:
+            if GPIO.input(self.home_switch_pin) == GPIO.HIGH:
                 if not self.home_seen:
                     self.home_seen = True
                     self.home_debounce_timer = 0.0
