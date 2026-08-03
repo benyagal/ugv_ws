@@ -20,6 +20,14 @@ MODE1_SLEEP = 0x10
 MODE1_AUTOINC = 0x20
 MODE1_RESTART = 0x80
 
+# OUTDRV=1: totem-pole (push-pull) output structure, needed to actively
+# drive the PWM lines high without relying on an external pull-up (as
+# open-drain, OUTDRV=0, would require). This is the power-on-reset
+# default, but the chip's VCC may not actually be power-cycled between
+# test runs, so a previous configuration attempt could have left it in
+# open-drain mode - explicitly setting it removes that uncertainty.
+MODE2_OUTDRV = 0x04
+
 
 class PCA9685:
     # The Jetson's I2C bus occasionally reports transient errors (e.g.
@@ -34,6 +42,7 @@ class PCA9685:
         self.bus = smbus2.SMBus(bus_num)
         self.address = address
         self._write8(MODE1, 0x00)
+        self._write8(MODE2, MODE2_OUTDRV)
         time.sleep(0.005)
 
     def _retry(self, func, *args):
