@@ -64,8 +64,14 @@ class PCA9685:
 
     def set_pwm_freq(self, freq_hz: float):
         prescale_val = int(round(25000000.0 / (4096 * freq_hz)) - 1)
-        old_mode = self._read8(MODE1)
-        sleep_mode = (old_mode & 0x7F) | MODE1_SLEEP
+        # Mask out any stale SLEEP bit from the read-back value. If it were
+        # left in (e.g. because a previous run was interrupted mid-sequence,
+        # or a transient I2C glitch corrupted an earlier write), every write
+        # below that reuses old_mode would keep re-asserting SLEEP=1,
+        # permanently leaving the oscillator off and every channel's PWM
+        # output disabled - despite every individual I2C write "succeeding".
+        old_mode = self._read8(MODE1) & ~MODE1_SLEEP & 0xFF
+        sleep_mode = old_mode | MODE1_SLEEP
         self._write8(MODE1, sleep_mode)
         self._write8(PRESCALE, prescale_val)
         self._write8(MODE1, old_mode)
