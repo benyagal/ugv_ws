@@ -35,12 +35,25 @@ def generate_launch_description():
         output='screen',
     )
 
-    # TODO: the new servo pins (24, 26, 32) have NOT yet been checked for
-    # the same "set to input in pinmux" issue. If gripper_node's startup log
-    # shows a Jetson.GPIO UserWarning for any of them, run the same
-    # standalone GPIO.setup(<pin>, GPIO.OUT) diagnostic to get the correct
-    # "busybox devmem <addr> w <val>" command, then add an ExecuteProcess
-    # here (same pattern as the relay fixups above) for each affected pin.
+    # Servo pins also boot with their pinmux set to input (same root cause
+    # as the relay pins, but a different register block/value - derived by
+    # running GPIO.setup(<pin>, GPIO.OUT) standalone for each pin and
+    # reading the exact "busybox devmem <addr> w <val>" from the resulting
+    # UserWarning).
+    fix_roller_pinmux = ExecuteProcess(
+        cmd=['busybox', 'devmem', '0x2434080', 'w', '0x5'],  # physical pin 32
+        output='screen',
+    )
+
+    fix_left_pinmux = ExecuteProcess(
+        cmd=['busybox', 'devmem', '0x243D008', 'w', '0x9'],  # physical pin 24
+        output='screen',
+    )
+
+    fix_right_pinmux = ExecuteProcess(
+        cmd=['busybox', 'devmem', '0x243D038', 'w', '0x9'],  # physical pin 26
+        output='screen',
+    )
 
     gripper_node = Node(
         package='ugv_gripper',
@@ -77,6 +90,9 @@ def generate_launch_description():
         with_joy_arg,
         fix_relay1_pinmux,
         fix_relay2_pinmux,
+        fix_roller_pinmux,
+        fix_left_pinmux,
+        fix_right_pinmux,
         delayed_gripper_node,
         gripper_joy_node,
     ])
