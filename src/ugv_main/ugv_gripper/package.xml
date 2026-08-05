@@ -3,7 +3,7 @@
 <package format="3">
   <name>ugv_gripper</name>
   <version>0.0.0</version>
-  <description>Gripper arm (PCA9685 servos + relay-driven linear actuator + homing microswitch) control running directly on the Jetson</description>
+  <description>Gripper arm (direct Jetson GPIO servos + relay-driven linear actuator + homing microswitch) control running directly on the Jetson</description>
   <maintainer email="dudu@todo.todo">dudu</maintainer>
   <license>TODO: License declaration</license>
 

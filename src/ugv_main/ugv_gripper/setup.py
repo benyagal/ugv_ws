@@ -18,7 +18,7 @@ setup(
     zip_safe=True,
     maintainer='dudu',
     maintainer_email='dudu@todo.todo',
-    description='Gripper arm control (PCA9685 servos + relay actuator + homing) running on the Jetson',
+    description='Gripper arm control (direct Jetson GPIO servos + relay actuator + homing) running on the Jetson',
     license='TODO: License declaration',
     tests_require=['pytest'],
     entry_points={

@@ -6,8 +6,9 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    i2c_bus_arg = DeclareLaunchArgument('i2c_bus', default_value='7')
-    pca9685_address_arg = DeclareLaunchArgument('pca9685_address', default_value='66')  # 0x42
+    roller_pin_arg = DeclareLaunchArgument('roller_pin', default_value='32')
+    left_pin_arg = DeclareLaunchArgument('left_pin', default_value='24')
+    right_pin_arg = DeclareLaunchArgument('right_pin', default_value='26')
     relay1_pin_arg = DeclareLaunchArgument('relay1_pin', default_value='29')
     relay2_pin_arg = DeclareLaunchArgument('relay2_pin', default_value='31')
     home_switch_pin_arg = DeclareLaunchArgument('home_switch_pin', default_value='33')
@@ -34,12 +35,20 @@ def generate_launch_description():
         output='screen',
     )
 
+    # TODO: the new servo pins (24, 26, 32) have NOT yet been checked for
+    # the same "set to input in pinmux" issue. If gripper_node's startup log
+    # shows a Jetson.GPIO UserWarning for any of them, run the same
+    # standalone GPIO.setup(<pin>, GPIO.OUT) diagnostic to get the correct
+    # "busybox devmem <addr> w <val>" command, then add an ExecuteProcess
+    # here (same pattern as the relay fixups above) for each affected pin.
+
     gripper_node = Node(
         package='ugv_gripper',
         executable='gripper_node',
         parameters=[{
-            'i2c_bus': LaunchConfiguration('i2c_bus'),
-            'pca9685_address': LaunchConfiguration('pca9685_address'),
+            'roller_pin': LaunchConfiguration('roller_pin'),
+            'left_pin': LaunchConfiguration('left_pin'),
+            'right_pin': LaunchConfiguration('right_pin'),
             'relay1_pin': LaunchConfiguration('relay1_pin'),
             'relay2_pin': LaunchConfiguration('relay2_pin'),
             'home_switch_pin': LaunchConfiguration('home_switch_pin'),
@@ -59,8 +68,9 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
-        i2c_bus_arg,
-        pca9685_address_arg,
+        roller_pin_arg,
+        left_pin_arg,
+        right_pin_arg,
         relay1_pin_arg,
         relay2_pin_arg,
         home_switch_pin_arg,

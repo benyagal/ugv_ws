@@ -1,123 +1,190 @@
 #!/usr/bin/env python3
-"""Gripper arm control node.
+"""Gripper arm control node - direct Jetson GPIO version (no PCA9685/I2C).
 
-Direct 1:1 (non-blocking) port of the Arduino sketch
-(All_motions_preparation_for_jetson.ino) to run natively on the Jetson,
-talking to the hardware over:
-  - I2C (PCA9685 16-channel PWM driver, 3 channels used) -> physical pins
-    27 (SDA) / 28 (SCL)
-  - 2 GPIO outputs driving the relay-controlled linear actuator (DC motor)
-    -> physical pins 29 (GPIO01) and 31 (GPIO11)
-  - 1 GPIO input for the homing microswitch -> physical pin 33 (GPIO13)
+Port of the "Smart Servo Controller V5" Arduino reference sketch
+(jetson_trial_2.ino), adapted to run natively on the Jetson via
+Jetson.GPIO software PWM instead of an I2C PCA9685 driver board (the
+PCA9685 board used previously is suspected dead/damaged).
 
-Commands are accepted as plain strings on the 'gripper_cmd' topic, using the
-exact same vocabulary as the Arduino serial protocol:
-  in, out, up, down, push, pull, stop
+Hardware (physical/BOARD pin numbers):
+  - Roller (continuous-rotation) servo, in/out          -> pin 32
+  - Left arm servo (180 degree)                         -> pin 24
+  - Right arm servo (180 degree, mirrored)               -> pin 26
+  - 2 GPIO outputs driving the relay-controlled linear
+    actuator (DC motor)                                  -> pins 29 / 31
+  - 1 GPIO input for the homing microswitch              -> pin 33
 
-Status/log messages are published on 'gripper_state' (mirrors Serial.println).
+Commands accepted as plain strings on the 'gripper_cmd' topic:
+  in, out, stop, home, up, down, push, pull, mstop, status
+  rollspeed <0-100>, inspeed <0-100>, outspeed <0-100>, armspeed <0-100>
+
+Status/log messages are published on 'gripper_state'.
+
+NOTE: unlike the previous PCA9685-based implementation, the relay-driven
+linear actuator (push/pull) has NO automatic timeout here - it matches
+the V5 reference sketch exactly, which relies on 'mstop'/'stop' (or a
+physical end-stop) to halt it. Flag this if a timeout safety net is
+still wanted.
 """
+import time
+
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
 
 import Jetson.GPIO as GPIO
 
-from ugv_gripper.pca9685 import PCA9685
+# =====================================================
+# ROLLER (continuous rotation servo) CALIBRATION
+# Only these three values determine direction.
+# =====================================================
+ROLLER_STOP_US = 1500
+ROLLER_FULL_IN_US = 1000
+ROLLER_FULL_OUT_US = 2000
 
 # =====================================================
-# PCA9685 CHANNELS
+# ARM (mirrored 180 degree servos) CALIBRATION
 # =====================================================
-SERVO1_CHANNEL = 0   # Continuous rotation servo (in/out + homing)
-SERVO2_CHANNEL = 1   # 180 degree servo (up/down)
-SERVO3_CHANNEL = 2   # 180 degree servo, mirrored counterpart of SERVO2
+ARM_UP_US = 500
+ARM_DOWN_US = 2500
+MIRROR_CENTER = 3000
 
 # =====================================================
-# SERVO PWM VALUES
+# HOMING
 # =====================================================
-SERVO1_STOP_PWM = 320
-SERVO1_MAX_CW_PWM = 380
-SERVO1_MAX_CCW_PWM = 260
-
-SERVO_MIN_PWM = 120
-SERVO_MAX_PWM = 480
+HOMING_TIME = 0.150       # seconds
+SWITCH_DEBOUNCE = 0.025   # seconds
 
 # =====================================================
-# TIMES (seconds)
+# ARM SPEED (movement duration, seconds)
 # =====================================================
-IN_TIME = 20.0
-MOTOR_TIME = 18.0
-HOME_BACK_TIME = 0.2
-HOME_DEBOUNCE_TIME = 0.02
+ARM_FASTEST = 0.030
+ARM_SLOWEST = 0.800
+
+# =====================================================
+# PWM
+# =====================================================
+PWM_FREQ_HZ = 50
+PWM_PERIOD_US = 1_000_000.0 / PWM_FREQ_HZ  # 20000us at 50Hz
 
 TICK_PERIOD = 0.02  # 50 Hz, same cadence as the Arduino loop()
 
 # =====================================================
 # STATES
 # =====================================================
-SERVO1_IDLE = 'idle'
-SERVO1_IN = 'in'
-SERVO1_OUT = 'out'
-SERVO1_BACKOFF = 'backoff'
+ROLLER_STOPPED = 'stopped'
+ROLLER_IN = 'in'
+ROLLER_OUT = 'out'
+ROLLER_HOMING = 'homing'
 
-MOTOR_IDLE = 'idle'
-MOTOR_PUSH = 'push'
-MOTOR_PULL = 'pull'
+RELAY_STOPPED = 'stopped'
+RELAY_PUSH = 'push'
+RELAY_PULL = 'pull'
+
+ARM_STATE_UP = 'up'
+ARM_STATE_DOWN = 'down'
+
+
+def clamp(value, lo, hi):
+    return max(lo, min(hi, value))
+
+
+def remap(value, in_min, in_max, out_min, out_max):
+    return out_min + (value - in_min) * (out_max - out_min) / (in_max - in_min)
+
+
+class ServoPWM:
+    """Thin wrapper around Jetson.GPIO software PWM, taking pulse widths in
+    microseconds (matching the Arduino Servo library's writeMicroseconds())
+    instead of a raw duty-cycle percentage."""
+
+    def __init__(self, pin):
+        self.pin = pin
+        GPIO.setup(pin, GPIO.OUT)
+        self._pwm = GPIO.PWM(pin, PWM_FREQ_HZ)
+        self._pwm.start(0)
+
+    def write_microseconds(self, pulse_us):
+        duty = clamp(pulse_us / PWM_PERIOD_US * 100.0, 0.0, 100.0)
+        self._pwm.ChangeDutyCycle(duty)
+
+    def stop(self):
+        self._pwm.stop()
 
 
 class GripperNode(Node):
     def __init__(self):
         super().__init__('gripper_node')
 
-        # Relays are active-low, matching the Arduino RELAY_ON/RELAY_OFF definitions
-        self.RELAY_ON = GPIO.LOW
-        self.RELAY_OFF = GPIO.HIGH
+        # Relay polarity empirically confirmed on this hardware (NOT the
+        # same as the Arduino reference sketch's LOW/HIGH convention, which
+        # was never tested on this specific wiring).
+        self.RELAY_ON = GPIO.HIGH
+        self.RELAY_OFF = GPIO.LOW
 
         # ---- parameters (hardware wiring) ----
-        self.declare_parameter('i2c_bus', 7)
-        self.declare_parameter('pca9685_address', 0x42)
+        self.declare_parameter('roller_pin', 32)
+        self.declare_parameter('left_pin', 24)
+        self.declare_parameter('right_pin', 26)
         self.declare_parameter('relay1_pin', 29)
         self.declare_parameter('relay2_pin', 31)
         self.declare_parameter('home_switch_pin', 33)
 
-        i2c_bus = self.get_parameter('i2c_bus').value
-        pca_addr = self.get_parameter('pca9685_address').value
+        self.roller_pin = self.get_parameter('roller_pin').value
+        self.left_pin = self.get_parameter('left_pin').value
+        self.right_pin = self.get_parameter('right_pin').value
         self.relay1_pin = self.get_parameter('relay1_pin').value
         self.relay2_pin = self.get_parameter('relay2_pin').value
         self.home_switch_pin = self.get_parameter('home_switch_pin').value
-
-        # ---- I2C / PCA9685 ----
-        self.pwm = PCA9685(i2c_bus, pca_addr)
-        self.pwm.set_pwm_freq(50)
 
         # ---- GPIO ----
         GPIO.setmode(GPIO.BOARD)
         GPIO.setup(self.relay1_pin, GPIO.OUT, initial=self.RELAY_OFF)
         GPIO.setup(self.relay2_pin, GPIO.OUT, initial=self.RELAY_OFF)
+        # NOTE: Jetson.GPIO ignores pull_up_down on this platform/carrier
+        # board (confirmed via a UserWarning during earlier testing) - an
+        # external pull-up resistor (e.g. 10k to 3.3V) on home_switch_pin
+        # is required for a reliable, non-floating reading.
         GPIO.setup(self.home_switch_pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
-        # ---- state (mirrors the Arduino globals) ----
-        self.servo1_state = SERVO1_IDLE
-        self.servo1_timer = 0.0
-        self.backoff_timer = 0.0
-        self.home_seen = False
-        self.home_debounce_timer = 0.0
+        self.roller_servo = ServoPWM(self.roller_pin)
+        self.left_servo = ServoPWM(self.left_pin)
+        self.right_servo = ServoPWM(self.right_pin)
 
-        self.motor_state = MOTOR_IDLE
-        self.motor_timer = 0.0
+        # ---- roller state ----
+        self.roller_state = ROLLER_STOPPED
+        self.roller_in_speed = 100
+        self.roller_out_speed = 100
+        self.homing_start = 0.0
+
+        # ---- arm state ----
+        self.arm_state = ARM_STATE_UP
+        self.arm_speed = 100
+        self.arm_start_pulse = ARM_UP_US
+        self.arm_target_pulse = ARM_UP_US
+        self.arm_current_pulse = ARM_UP_US
+        self.arm_move_start = 0.0
+        self.arm_move_time = ARM_FASTEST
+
+        # ---- relay state ----
+        self.relay_state = RELAY_STOPPED
+
+        # ---- homing switch debounce (edge-detect via polling) ----
+        self.prev_switch_pressed = False
+        self.last_switch_time = 0.0
 
         # ---- ROS interface ----
         self.create_subscription(String, 'gripper_cmd', self.cmd_callback, 10)
         self.state_pub = self.create_publisher(String, 'gripper_state', 10)
 
-        self.servo1_stop()
-        self.motor_stop()
-
-        self.pwm.set_pwm(SERVO2_CHANNEL, 0, SERVO_MIN_PWM)
-        self.pwm.set_pwm(SERVO3_CHANNEL, 0, SERVO_MAX_PWM)
+        self.roller_servo.write_microseconds(ROLLER_STOP_US)
+        self.left_servo.write_microseconds(ARM_UP_US)
+        self.right_servo.write_microseconds(MIRROR_CENTER - ARM_UP_US)
+        self.update_relay()
 
         self.create_timer(TICK_PERIOD, self.update)
 
-        self.log('SYSTEM READY')
+        self.log('Smart Servo Controller V5 Ready (Jetson native)')
 
     # =====================================================
     # Helpers
@@ -126,212 +193,253 @@ class GripperNode(Node):
         self.get_logger().info(msg)
         self.state_pub.publish(String(data=msg))
 
-    def is_busy(self):
-        return self.servo1_state != SERVO1_IDLE or self.motor_state != MOTOR_IDLE
+    # =====================================================
+    # Roller (continuous rotation servo)
+    # =====================================================
+    def calculate_roller_pulse(self, inward, speed):
+        speed = clamp(speed, 0, 100)
+        if inward:
+            return remap(speed, 0, 100, ROLLER_STOP_US, ROLLER_FULL_IN_US)
+        return remap(speed, 0, 100, ROLLER_STOP_US, ROLLER_FULL_OUT_US)
+
+    def set_roller_state(self, state):
+        self.roller_state = state
+        if state == ROLLER_HOMING:
+            self.homing_start = time.monotonic()
+        self.update_roller()
+
+    def update_roller(self):
+        if self.roller_state == ROLLER_STOPPED:
+            pulse = ROLLER_STOP_US
+        elif self.roller_state == ROLLER_IN:
+            pulse = self.calculate_roller_pulse(True, self.roller_in_speed)
+        elif self.roller_state == ROLLER_OUT:
+            pulse = self.calculate_roller_pulse(False, self.roller_out_speed)
+        elif self.roller_state == ROLLER_HOMING:
+            pulse = ROLLER_FULL_IN_US
+        else:
+            pulse = ROLLER_STOP_US
+        self.roller_servo.write_microseconds(pulse)
 
     # =====================================================
-    # Continuous servo (servo1)
+    # Arm (mirrored 180 degree servos)
     # =====================================================
-    def servo1_cw(self):
-        self.pwm.set_pwm(SERVO1_CHANNEL, 0, SERVO1_MAX_CW_PWM)
-        self.log('Servo1 CW')
+    def calculate_arm_duration(self):
+        speed = clamp(self.arm_speed, 0, 100)
+        return remap(speed, 0, 100, ARM_SLOWEST, ARM_FASTEST)
 
-    def servo1_ccw(self):
-        self.pwm.set_pwm(SERVO1_CHANNEL, 0, SERVO1_MAX_CCW_PWM)
-        self.log('Servo1 CCW')
+    def move_arm(self, up):
+        self.arm_start_pulse = self.arm_current_pulse
+        if up:
+            self.arm_target_pulse = ARM_UP_US
+            self.arm_state = ARM_STATE_UP
+        else:
+            self.arm_target_pulse = ARM_DOWN_US
+            self.arm_state = ARM_STATE_DOWN
+        self.arm_move_start = time.monotonic()
+        self.arm_move_time = self.calculate_arm_duration()
 
-    def servo1_stop(self):
-        self.pwm.set_pwm(SERVO1_CHANNEL, 0, SERVO1_STOP_PWM)
-        self.log('Servo1 Stop')
+    def update_arm(self):
+        if self.arm_current_pulse == self.arm_target_pulse:
+            return
+
+        elapsed = time.monotonic() - self.arm_move_start
+        if elapsed >= self.arm_move_time:
+            self.arm_current_pulse = self.arm_target_pulse
+        else:
+            progress = elapsed / self.arm_move_time
+            self.arm_current_pulse = (
+                self.arm_start_pulse
+                + (self.arm_target_pulse - self.arm_start_pulse) * progress
+            )
+
+        self.left_servo.write_microseconds(self.arm_current_pulse)
+        self.right_servo.write_microseconds(MIRROR_CENTER - self.arm_current_pulse)
+
+    # =====================================================
+    # Homing (switch polled at 50Hz instead of a hardware interrupt -
+    # equivalent behavior, since the Arduino ISR only ever set a flag
+    # that was checked once per loop() iteration anyway)
+    # =====================================================
+    def check_home_switch(self):
+        pressed = GPIO.input(self.home_switch_pin) == GPIO.LOW
+
+        if pressed and not self.prev_switch_pressed:
+            now = time.monotonic()
+            if now - self.last_switch_time >= SWITCH_DEBOUNCE:
+                self.last_switch_time = now
+                # Homing only interrupts OUT movement
+                if self.roller_state == ROLLER_OUT:
+                    self.set_roller_state(ROLLER_HOMING)
+
+        self.prev_switch_pressed = pressed
+
+    def update_homing(self):
+        if self.roller_state != ROLLER_HOMING:
+            return
+
+        self.roller_servo.write_microseconds(ROLLER_FULL_IN_US)
+
+        if time.monotonic() - self.homing_start >= HOMING_TIME:
+            self.set_roller_state(ROLLER_STOPPED)
+            self.log('Homing complete.')
 
     # =====================================================
     # Relay-driven linear actuator
     # =====================================================
-    def motor_push(self):
-        GPIO.output(self.relay1_pin, self.RELAY_ON)
-        GPIO.output(self.relay2_pin, self.RELAY_ON)
-        self.log('Motor PUSH')
+    def update_relay(self):
+        if self.relay_state == RELAY_STOPPED:
+            GPIO.output(self.relay1_pin, self.RELAY_OFF)
+            GPIO.output(self.relay2_pin, self.RELAY_OFF)
+        elif self.relay_state == RELAY_PUSH:
+            GPIO.output(self.relay1_pin, self.RELAY_ON)
+            GPIO.output(self.relay2_pin, self.RELAY_OFF)
+        elif self.relay_state == RELAY_PULL:
+            GPIO.output(self.relay1_pin, self.RELAY_OFF)
+            GPIO.output(self.relay2_pin, self.RELAY_ON)
 
-    def motor_pull(self):
-        GPIO.output(self.relay1_pin, self.RELAY_OFF)
-        GPIO.output(self.relay2_pin, self.RELAY_OFF)
-        self.log('Motor PULL')
+    def relay_push(self):
+        self.relay_state = RELAY_PUSH
+        self.update_relay()
 
-    def motor_stop(self):
-        GPIO.output(self.relay1_pin, self.RELAY_OFF)
-        GPIO.output(self.relay2_pin, self.RELAY_ON)
-        self.log('Motor STOP')
+    def relay_pull(self):
+        self.relay_state = RELAY_PULL
+        self.update_relay()
+
+    def relay_stop(self):
+        self.relay_state = RELAY_STOPPED
+        self.update_relay()
 
     # =====================================================
-    # Commands (mirrors the Arduino command_* functions)
+    # Emergency stop
     # =====================================================
-    def command_in(self):
-        self.log('IN')
-        self.servo1_state = SERVO1_IN
-        self.servo1_timer = 0.0
-        self.servo1_ccw()
+    def emergency_stop(self):
+        self.set_roller_state(ROLLER_STOPPED)
+        self.relay_stop()
 
-    def command_out(self):
-        self.log('OUT')
-        self.home_seen = False
-        self.servo1_state = SERVO1_OUT
-        self.servo1_cw()
+        # Leave the arm exactly where it is (cancel any in-progress move)
+        self.arm_start_pulse = self.arm_current_pulse
+        self.arm_target_pulse = self.arm_current_pulse
 
-    def command_up(self):
-        self.log('UP')
-        self.pwm.set_pwm(SERVO2_CHANNEL, 0, SERVO_MAX_PWM)
-        self.pwm.set_pwm(SERVO3_CHANNEL, 0, SERVO_MIN_PWM)
-        self.log('UP complete')
+        self.log('EMERGENCY STOP')
 
-    def command_down(self):
-        self.log('DOWN')
-        self.pwm.set_pwm(SERVO2_CHANNEL, 0, SERVO_MIN_PWM)
-        self.pwm.set_pwm(SERVO3_CHANNEL, 0, SERVO_MAX_PWM)
-        self.log('DOWN complete')
-
-    def command_push(self):
-        self.log('PUSH')
-        self.motor_state = MOTOR_PUSH
-        self.motor_timer = 0.0
-        self.motor_push()
-
-    def command_pull(self):
-        self.log('PULL')
-        self.motor_state = MOTOR_PULL
-        self.motor_timer = 0.0
-        self.motor_pull()
-
-    def stop_everything(self):
-        self.log('STOP')
-
-        self.servo1_stop()
-        self.servo1_state = SERVO1_IDLE
-        self.home_seen = False
-
-        self.motor_stop()
-        self.motor_state = MOTOR_IDLE
-
-        self.servo1_timer = 0.0
-        self.motor_timer = 0.0
-        self.backoff_timer = 0.0
-        self.home_debounce_timer = 0.0
+    # =====================================================
+    # Status
+    # =====================================================
+    def print_status(self):
+        switch_state = 'PRESSED' if GPIO.input(self.home_switch_pin) == GPIO.LOW else 'RELEASED'
+        lines = [
+            '========== STATUS ==========',
+            f'Roller State      : {self.roller_state.upper()}',
+            f'Arm Position      : {self.arm_state.upper()}',
+            f'Arm Pulse (us)    : {self.arm_current_pulse:.0f}',
+            f'IN Speed (%)      : {self.roller_in_speed}',
+            f'OUT Speed (%)     : {self.roller_out_speed}',
+            f'Arm Speed (%)     : {self.arm_speed}',
+            f'Microswitch       : {switch_state}',
+            f'Relay State       : {self.relay_state.upper()}',
+            f'Homing Active     : {"YES" if self.roller_state == ROLLER_HOMING else "NO"}',
+            '============================',
+        ]
+        for line in lines:
+            self.log(line)
 
     # =====================================================
     # Main tick (replaces Arduino loop())
     # =====================================================
     def update(self):
-        try:
-            self.update_continuous_servo()
-            self.update_dc_motor()
-        except OSError as e:
-            self.handle_i2c_failure(e)
-
-    def handle_i2c_failure(self, error: Exception):
-        # A persistent I2C bus fault (e.g. repeated "arbitration lost") should
-        # never be allowed to crash the whole node - that leaves the motor/
-        # relay in whatever state they were and requires a manual restart.
-        # Instead, log it and force everything to a safe stopped state; the
-        # next command will retry the I2C bus from a clean slate.
-        self.get_logger().error(f'I2C bus failure, stopping gripper: {error}')
-        self.servo1_state = SERVO1_IDLE
-        self.home_seen = False
-        self.motor_state = MOTOR_IDLE
-        try:
-            self.motor_stop()
-        except OSError:
-            pass
-        self.log('I2C ERROR - STOPPED')
-
-    def update_continuous_servo(self):
-        if self.servo1_state == SERVO1_IDLE:
-            return
-
-        if self.servo1_state == SERVO1_IN:
-            self.servo1_timer += TICK_PERIOD
-            if self.servo1_timer >= IN_TIME:
-                self.servo1_stop()
-                self.servo1_state = SERVO1_IDLE
-                self.log('IN complete')
-            return
-
-        if self.servo1_state == SERVO1_OUT:
-            # INPUT_PULLUP, trigger when HIGH (same as the Arduino sketch)
-            if GPIO.input(self.home_switch_pin) == GPIO.HIGH:
-                if not self.home_seen:
-                    self.home_seen = True
-                    self.home_debounce_timer = 0.0
-                else:
-                    self.home_debounce_timer += TICK_PERIOD
-
-                if self.home_debounce_timer >= HOME_DEBOUNCE_TIME:
-                    self.log('Home detected')
-                    self.servo1_ccw()
-                    self.backoff_timer = 0.0
-                    self.servo1_state = SERVO1_BACKOFF
-                    self.home_seen = False
-            else:
-                self.home_seen = False
-            return
-
-        if self.servo1_state == SERVO1_BACKOFF:
-            self.backoff_timer += TICK_PERIOD
-            if self.backoff_timer >= HOME_BACK_TIME:
-                self.servo1_stop()
-                self.servo1_state = SERVO1_IDLE
-                self.log('Home complete')
-            return
-
-    def update_dc_motor(self):
-        if self.motor_state == MOTOR_IDLE:
-            return
-
-        self.motor_timer += TICK_PERIOD
-        if self.motor_timer >= MOTOR_TIME:
-            self.motor_stop()
-            if self.motor_state == MOTOR_PUSH:
-                self.log('PUSH complete')
-            else:
-                self.log('PULL complete')
-            self.motor_state = MOTOR_IDLE
+        self.check_home_switch()
+        self.update_roller()
+        self.update_arm()
+        self.update_homing()
+        self.update_relay()
 
     # =====================================================
-    # Command handling (mirrors readSerial())
+    # Command handling (mirrors processCommand())
     # =====================================================
     def cmd_callback(self, msg: String):
         command = msg.data.strip().lower()
         if not command:
             return
 
+        if command == 'in':
+            self.set_roller_state(ROLLER_IN)
+            return
+        if command == 'out':
+            self.set_roller_state(ROLLER_OUT)
+            return
         if command == 'stop':
-            self.stop_everything()
+            self.emergency_stop()
+            return
+        if command == 'home':
+            self.set_roller_state(ROLLER_HOMING)
+            return
+        if command == 'up':
+            self.move_arm(True)
+            return
+        if command == 'down':
+            self.move_arm(False)
+            return
+        if command == 'push':
+            self.relay_push()
+            return
+        if command == 'pull':
+            self.relay_pull()
+            return
+        if command == 'mstop':
+            self.relay_stop()
+            return
+        if command == 'status':
+            self.print_status()
             return
 
-        if self.is_busy():
-            self.log('System Busy')
-            return
+        for prefix, setter in (
+            ('rollspeed', self._set_roll_speed),
+            ('inspeed', self._set_in_speed),
+            ('outspeed', self._set_out_speed),
+            ('armspeed', self._set_arm_speed),
+        ):
+            if command.startswith(prefix):
+                value_str = command[len(prefix):].strip()
+                if not value_str:
+                    self.log('Missing value.')
+                    return
+                try:
+                    value = int(value_str)
+                except ValueError:
+                    self.log('Speed must be 0-100.')
+                    return
+                if not 0 <= value <= 100:
+                    self.log('Speed must be 0-100.')
+                    return
+                setter(value)
+                return
 
-        try:
-            if command == 'in':
-                self.command_in()
-            elif command == 'out':
-                self.command_out()
-            elif command == 'up':
-                self.command_up()
-            elif command == 'down':
-                self.command_down()
-            elif command == 'push':
-                self.command_push()
-            elif command == 'pull':
-                self.command_pull()
-            else:
-                self.log(f'Unknown command: {command}')
-        except OSError as e:
-            self.handle_i2c_failure(e)
+        self.log(f'Unknown command: {command}')
+
+    def _set_roll_speed(self, value):
+        self.roller_in_speed = value
+        self.roller_out_speed = value
+        self.log('Roller speed updated.')
+
+    def _set_in_speed(self, value):
+        self.roller_in_speed = value
+        self.log('IN speed updated.')
+
+    def _set_out_speed(self, value):
+        self.roller_out_speed = value
+        self.log('OUT speed updated.')
+
+    def _set_arm_speed(self, value):
+        self.arm_speed = value
+        self.log('Arm speed updated.')
 
     def destroy_node(self):
-        self.servo1_stop()
-        self.motor_stop()
-        self.pwm.close()
+        self.roller_servo.write_microseconds(ROLLER_STOP_US)
+        self.relay_stop()
+        self.roller_servo.stop()
+        self.left_servo.stop()
+        self.right_servo.stop()
         GPIO.cleanup()
         super().destroy_node()
 
