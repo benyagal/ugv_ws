@@ -267,7 +267,8 @@ class GripperNode(Node):
             return
 
         elapsed = time.monotonic() - self.arm_move_start
-        if elapsed >= self.arm_move_time:
+        just_finished = elapsed >= self.arm_move_time
+        if just_finished:
             self.arm_current_pulse = self.arm_target_pulse
         else:
             progress = elapsed / self.arm_move_time
@@ -278,6 +279,9 @@ class GripperNode(Node):
 
         self.left_servo.write_microseconds(self.arm_current_pulse)
         self.right_servo.write_microseconds(MIRROR_CENTER - self.arm_current_pulse)
+
+        if just_finished:
+            self.log(f'{self.arm_state.upper()} complete')
 
     # =====================================================
     # Homing (switch polled at 50Hz instead of a hardware interrupt -
@@ -385,31 +389,44 @@ class GripperNode(Node):
         if not command:
             return
 
+        # NOTE: the V5 reference sketch itself doesn't log anything for
+        # these "happy path" commands (only STOP/homing-complete/speed
+        # changes print) - added here purely for /gripper_state operator
+        # feedback, matching the older node's behavior. Doesn't change any
+        # actual motion logic.
         if command == 'in':
+            self.log('IN')
             self.set_roller_state(ROLLER_IN)
             return
         if command == 'out':
+            self.log('OUT')
             self.set_roller_state(ROLLER_OUT)
             return
         if command == 'stop':
             self.emergency_stop()
             return
         if command == 'home':
+            self.log('HOME')
             self.set_roller_state(ROLLER_HOMING)
             return
         if command == 'up':
+            self.log('UP')
             self.move_arm(True)
             return
         if command == 'down':
+            self.log('DOWN')
             self.move_arm(False)
             return
         if command == 'push':
+            self.log('PUSH')
             self.relay_push()
             return
         if command == 'pull':
+            self.log('PULL')
             self.relay_pull()
             return
         if command == 'mstop':
+            self.log('MSTOP')
             self.relay_stop()
             return
         if command == 'status':
