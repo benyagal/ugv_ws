@@ -3,7 +3,7 @@
 
 Port of the "Smart Servo Controller V5" Arduino reference sketch
 (jetson_trial_2.ino), adapted to run natively on the Jetson via
-Jetson.GPIO software PWM instead of an I2C PCA9685 driver board (the
+bit-banged software PWM instead of an I2C PCA9685 driver board (the
 PCA9685 board used previously is suspected dead/damaged).
 
 Hardware (physical/BOARD pin numbers):
@@ -26,6 +26,7 @@ the V5 reference sketch exactly, which relies on 'mstop'/'stop' (or a
 physical end-stop) to halt it. Flag this if a timeout safety net is
 still wanted.
 """
+import threading
 import time
 
 import rclpy
@@ -94,22 +95,44 @@ def remap(value, in_min, in_max, out_min, out_max):
 
 
 class ServoPWM:
-    """Thin wrapper around Jetson.GPIO software PWM, taking pulse widths in
-    microseconds (matching the Arduino Servo library's writeMicroseconds())
-    instead of a raw duty-cycle percentage."""
+    """Bit-banged software PWM, taking pulse widths in microseconds
+    (matching the Arduino Servo library's writeMicroseconds()).
+
+    Jetson.GPIO's own GPIO.PWM class (unlike RPi.GPIO's) only works on a
+    small, fixed set of hardware-PWM-capable pins - GPIO.PWM(24, 50) raises
+    "ValueError: Channel 24 is not a PWM" on this board, even though pin 32
+    is fine. Rather than special-casing which pins have hardware PWM, this
+    bit-bangs the signal via a background thread on ANY GPIO pin, so it
+    works uniformly regardless of hardware PWM capability.
+    """
 
     def __init__(self, pin):
         self.pin = pin
-        GPIO.setup(pin, GPIO.OUT)
-        self._pwm = GPIO.PWM(pin, PWM_FREQ_HZ)
-        self._pwm.start(0)
+        self._period_s = 1.0 / PWM_FREQ_HZ
+        self._pulse_s = 0.0
+        self._running = True
+        GPIO.setup(pin, GPIO.OUT, initial=GPIO.LOW)
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _run(self):
+        while self._running:
+            pulse_s = self._pulse_s
+            if pulse_s <= 0.0:
+                time.sleep(self._period_s)
+                continue
+            GPIO.output(self.pin, GPIO.HIGH)
+            time.sleep(pulse_s)
+            GPIO.output(self.pin, GPIO.LOW)
+            time.sleep(max(0.0, self._period_s - pulse_s))
 
     def write_microseconds(self, pulse_us):
-        duty = clamp(pulse_us / PWM_PERIOD_US * 100.0, 0.0, 100.0)
-        self._pwm.ChangeDutyCycle(duty)
+        self._pulse_s = clamp(pulse_us, 0.0, PWM_PERIOD_US) / 1_000_000.0
 
     def stop(self):
-        self._pwm.stop()
+        self._running = False
+        self._thread.join(timeout=1.0)
+        GPIO.output(self.pin, GPIO.LOW)
 
 
 class GripperNode(Node):
