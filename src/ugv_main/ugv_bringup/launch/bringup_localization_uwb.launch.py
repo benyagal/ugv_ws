@@ -102,15 +102,19 @@ def generate_launch_description():
             {'use_sim_time': LaunchConfiguration('use_sim_time')},
             {'do_bias_estimation': True},
             {'do_adaptive_gain': True},
-            # Tested the magnetometer (already published on /imu/mag by
-            # ugv_bringup.py) as an absolute yaw reference. First isolated
-            # test (rotation not monotonic) suggested it's dominated by the
-            # robot's own motors/chassis rather than Earth's field - but
-            # re-trying now with wheel odometry fully removed from both EKF
-            # configs, to test the IMU+UWB-only configuration end-to-end.
-            # Revert to False (and restore wheel odometry in the EKF
-            # configs) if this doesn't work out.
-            {'use_mag': True},
+            # Magnetometer ruled out (dominated by the robot's own motors/
+            # chassis, confirmed non-monotonic during a clean rotation).
+            # Switching to pure gyro yaw instead: the earlier "fast runaway
+            # rotation" turned out to be a SEPARATE bug (ekf_global's yaw
+            # state being completely unconstrained), not the gyro itself -
+            # now that that's fixed, gyro-only yaw should just show its
+            # normal slow bias drift (as seen in the very first re-enable
+            # test) rather than a catastrophic spin. Give it a correct
+            # starting heading once via RViz's "2D Pose Estimate" tool
+            # (publishes /initialpose, which the EKF's set_pose picks up)
+            # after launch, since the gyro can only track RELATIVE
+            # rotation from wherever it starts.
+            {'use_mag': False},
             {'gain_acc': 0.01},
             {'gain_mag': 0.01},
         ]
