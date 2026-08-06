@@ -102,7 +102,15 @@ def generate_launch_description():
             {'use_sim_time': LaunchConfiguration('use_sim_time')},
             {'do_bias_estimation': True},
             {'do_adaptive_gain': True},
-            {'use_mag': False},
+            # Trying the magnetometer (already published on /imu/mag by
+            # ugv_bringup.py) as an absolute yaw reference, since a
+            # gyro-only yaw estimate can never stop drifting without one.
+            # Magnetometers are notoriously unreliable near motors/ferrous
+            # metal on mobile robots though - needs empirical verification
+            # (e.g. rotate the robot slowly through a full 360 and see if
+            # the fused yaw tracks smoothly, or jumps/glitches near the
+            # motors) before trusting it for navigation.
+            {'use_mag': True},
             {'gain_acc': 0.01},
             {'gain_mag': 0.01},
         ]
