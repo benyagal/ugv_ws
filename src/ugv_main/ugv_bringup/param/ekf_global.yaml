@@ -16,18 +16,26 @@ ekf_global_filter_node:
         base_link_frame: base_footprint
         world_frame: map
 
-        # Wheel odometry fusion temporarily disabled (all fields false): the
-        # base chassis track width / scale hasn't been re-verified since the
+        # Wheel odometry POSITION fusion disabled (x,y false): the base
+        # chassis track width / scale hasn't been re-verified since the
         # rebuild, so its position estimate isn't trustworthy yet. UWB alone
         # (once its own accuracy/update rate is improved) is currently more
-        # reliable. Re-enable (restore the [true,true,false / false,false,
-        # true / true,false,false / false,false,true / false,false,false]
-        # config below) once the wheel odometry has been properly tuned.
+        # reliable for x/y.
+        #
+        # yaw/vyaw are kept ENABLED here though: with odom0 fully disabled
+        # and pose0 (UWB) providing no orientation at all, the global
+        # filter's yaw state had NO measurement constraining it whatsoever -
+        # in a Kalman filter, a completely unconstrained state can free-run
+        # via the process model alone, which is what caused the runaway
+        # rotation in RViz (independent of the IMU - re-enabling/disabling
+        # imu0 in ekf_local made no difference, confirming this was the
+        # actual cause). Fusing wheel-based yaw/vyaw here gives the global
+        # filter's orientation state a real measurement to track.
         odom0: /odometry/local
         odom0_config: [false, false, false,
+                       false, false, true,
                        false, false, false,
-                       false, false, false,
-                       false, false, false,
+                       false, false, true,
                        false, false, false]
         odom0_queue_size: 10
         odom0_nodelay: false
