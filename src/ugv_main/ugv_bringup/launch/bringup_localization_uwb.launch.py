@@ -103,15 +103,14 @@ def generate_launch_description():
             {'do_bias_estimation': True},
             {'do_adaptive_gain': True},
             # Tested the magnetometer (already published on /imu/mag by
-            # ugv_bringup.py) as an absolute yaw reference. RULED OUT: a
-            # clean, continuous, single-direction full rotation test showed
-            # the fused yaw was NOT monotonic (went up and down instead of
-            # steadily increasing/decreasing through ~360 degrees) - the
-            # magnetic reading is almost certainly dominated by the robot's
-            # own motors/ferrous chassis (which rotates WITH the sensor)
-            # rather than Earth's field, so it can't be fixed with a static
-            # hard/soft-iron calibration. Reverting to False.
-            {'use_mag': False},
+            # ugv_bringup.py) as an absolute yaw reference. First isolated
+            # test (rotation not monotonic) suggested it's dominated by the
+            # robot's own motors/chassis rather than Earth's field - but
+            # re-trying now with wheel odometry fully removed from both EKF
+            # configs, to test the IMU+UWB-only configuration end-to-end.
+            # Revert to False (and restore wheel odometry in the EKF
+            # configs) if this doesn't work out.
+            {'use_mag': True},
             {'gain_acc': 0.01},
             {'gain_mag': 0.01},
         ]

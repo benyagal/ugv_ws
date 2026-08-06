@@ -22,15 +22,16 @@ ekf_global_filter_node:
         # (once its own accuracy/update rate is improved) is currently more
         # reliable for x/y.
         #
-        # yaw/vyaw are kept ENABLED here though: with odom0 fully disabled
-        # and pose0 (UWB) providing no orientation at all, the global
-        # filter's yaw state had NO measurement constraining it whatsoever -
-        # in a Kalman filter, a completely unconstrained state can free-run
-        # via the process model alone, which is what caused the runaway
-        # rotation in RViz (independent of the IMU - re-enabling/disabling
-        # imu0 in ekf_local made no difference, confirming this was the
-        # actual cause). Fusing wheel-based yaw/vyaw here gives the global
-        # filter's orientation state a real measurement to track.
+        # yaw/vyaw stay enabled here (odom0_config below), but NOTE: this no
+        # longer carries wheel-based yaw at all - ekf_local.yaml now fully
+        # disables its own odom0 (wheel) and instead fuses imu0 (mag-
+        # corrected IMU) for yaw, so /odometry/local's yaw is IMU-derived by
+        # the time it reaches this filter. Deliberately NOT adding a
+        # separate direct imu0 input here too - that would double-fuse the
+        # same IMU yaw signal through two channels (once via this odom0,
+        # once directly), which is exactly what caused the fast runaway
+        # rotation bug earlier when base_node.cpp's own yaw became IMU-
+        # derived while ekf_local also fused imu0 directly.
         odom0: /odometry/local
         odom0_config: [false, false, false,
                        false, false, true,

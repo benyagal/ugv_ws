@@ -15,11 +15,21 @@ ekf_local_filter_node:
         base_link_frame: base_footprint
         world_frame: odom
 
+        # Wheel odometry position/yaw fusion fully removed here per request
+        # to test an IMU(mag)+UWB-only configuration end-to-end. KNOWN RISK:
+        # with odom0 fully disabled, this filter's own x/y position state
+        # has NO measurement at all (imu0 only provides orientation, not
+        # position) - it will likely free-run/drift unconstrained, the same
+        # class of bug fixed earlier for yaw in ekf_global.yaml. If that
+        # happens, restore odom0_config to
+        # [true,true,false / false,false,true / true,false,false /
+        #  false,false,true / false,false,false] and set imu0 back to all
+        # false below.
         odom0: /odom_raw
-        odom0_config: [true, true, false,
-                       false, false, true,
-                       true, false, false,
-                       false, false, true,
+        odom0_config: [false, false, false,
+                       false, false, false,
+                       false, false, false,
+                       false, false, false,
                        false, false, false]
         odom0_queue_size: 10
         odom0_nodelay: false
@@ -29,17 +39,13 @@ ekf_local_filter_node:
         odom0_twist_rejection_threshold: 1.542
 
         imu0: /imu/data
-        # Disabled again: re-enabling yaw/vyaw caused a MUCH WORSE, fast
-        # runaway rotation in RViz (~360 deg every 2s), likely a sign/
-        # convention mismatch between the IMU's yaw-rate and the wheel
-        # odometry's yaw-rate causing EKF instability when fusing both
-        # simultaneously. Needs the IMU's angular_velocity.z sign to be
-        # directly compared against a known physical rotation direction
-        # (and against odom0's vyaw sign) before trying again.
+        # Re-enabled yaw/vyaw to replace the removed wheel-based yaw, now
+        # using the magnetometer-corrected orientation (use_mag:=True in
+        # the launch file).
         imu0_config: [false, false, false,
+                      false, false, true,
                       false, false, false,
-                      false, false, false,
-                      false, false, false,
+                      false, false, true,
                       false, false, false]
         imu0_queue_size: 10
         imu0_nodelay: false
