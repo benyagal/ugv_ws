@@ -179,12 +179,16 @@ private:
         }
 
         // Use IMU yaw if available
-        // Re-enabled: the ICM20948 previously produced bit-identical
-        // (frozen) readings even while physically driving the robot,
-        // confirmed dead. Retested and /imu/data_raw now shows genuine
-        // sample-to-sample variation (both accel and gyro), so trusting it
-        // again.
-        yaw = imu_yaw != 0 ? imu_yaw : odom_yaw;
+        // Reverted back to wheel-odometry-only yaw here. Re-enabling
+        // 'yaw = imu_yaw' caused a much WORSE, fast runaway rotation in
+        // RViz (~360 deg every 2s) - almost certainly because /odom_raw's
+        // yaw (fed into ekf_local as odom0, yaw=true) and /imu/data (fed
+        // directly as imu0, yaw=true) were BOTH now IMU-derived, so the
+        // EKF was double-fusing the same signal through two channels with
+        // slightly different timing/noise, causing instability. The IMU
+        // yaw is still fused - but only once, via ekf_local's imu0 input -
+        // so this stays purely wheel-based to avoid that double-fusion.
+        yaw = odom_yaw;
     }
 
     // Function to publish odometry data and broadcast transformation
