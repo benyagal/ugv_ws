@@ -179,10 +179,12 @@ private:
         }
 
         // Use IMU yaw if available
-        // NOTE: IMU-derived yaw has been found unreliable (frozen/stuck readings
-        // from the ICM20948 on this hardware) — rely purely on wheel-odometry-based
-        // yaw until a working alternative heading source (e.g. UWB) is in place.
-        yaw = odom_yaw;
+        // Re-enabled: the ICM20948 previously produced bit-identical
+        // (frozen) readings even while physically driving the robot,
+        // confirmed dead. Retested and /imu/data_raw now shows genuine
+        // sample-to-sample variation (both accel and gyro), so trusting it
+        // again.
+        yaw = imu_yaw != 0 ? imu_yaw : odom_yaw;
     }
 
     // Function to publish odometry data and broadcast transformation

@@ -29,10 +29,15 @@ ekf_local_filter_node:
         odom0_twist_rejection_threshold: 1.542
 
         imu0: /imu/data
+        # Re-enabled yaw/vyaw: the ICM20948 previously produced bit-identical
+        # (frozen) raw gyro/accel data even while physically driving the
+        # robot, confirmed dead at the hardware/firmware level. Retested and
+        # /imu/data_raw now shows genuine sample-to-sample noise-level
+        # variation (not frozen), so fusing yaw again.
         imu0_config: [false, false, false,
+                      false, false, true,
                       false, false, false,
-                      false, false, false,
-                      false, false, false,
+                      false, false, true,
                       false, false, false]
         imu0_queue_size: 10
         imu0_nodelay: false
