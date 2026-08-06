@@ -145,7 +145,12 @@ def generate_launch_description():
             os.path.join(get_package_share_directory('ugv_bringup'), 'param', 'ekf_local.yaml'),
             {'use_sim_time': LaunchConfiguration('use_sim_time')},
         ],
-        remappings=[('/odometry/filtered', '/odometry/local')]
+        # Both EKF nodes advertise a service literally named 'set_pose' by
+        # default - since neither is namespaced, they collide on the same
+        # global /set_pose name. Remapped to unique names so each can be
+        # called individually (needed to give both filters a matching
+        # starting yaw, e.g. from RViz's "2D Pose Estimate").
+        remappings=[('/odometry/filtered', '/odometry/local'), ('set_pose', 'ekf_local/set_pose')]
     )
 
     global_ekf_node = Node(
@@ -157,7 +162,17 @@ def generate_launch_description():
             os.path.join(get_package_share_directory('ugv_bringup'), 'param', 'ekf_global.yaml'),
             {'use_sim_time': LaunchConfiguration('use_sim_time')},
         ],
-        remappings=[('/odometry/filtered', '/odometry/global')]
+        remappings=[('/odometry/filtered', '/odometry/global'), ('set_pose', 'ekf_global/set_pose')]
+    )
+
+    initialpose_bridge_node = Node(
+        package='ugv_bringup',
+        executable='initialpose_bridge',
+        name='initialpose_bridge',
+        output='screen',
+        parameters=[
+            {'use_sim_time': LaunchConfiguration('use_sim_time')},
+        ]
     )
 
     uwb_simulator_node = Node(
@@ -304,6 +319,7 @@ def generate_launch_description():
         uwb_transform_node,
         uwb_driver_node,
         global_ekf_node,
+        initialpose_bridge_node,
         map_server_node,
         lifecycle_manager_map_node,
     ])
