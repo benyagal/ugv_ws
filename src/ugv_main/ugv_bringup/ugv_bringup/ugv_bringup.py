@@ -120,10 +120,13 @@ class ugv_bringup(Node):
         self.gyro_bias_samples = {"gx": [], "gy": [], "gz": []}
         self.gyro_bias = {"gx": 0.0, "gy": 0.0, "gz": 0.0}
         self.gyro_calibrated = False
-        # Increased from 200: more samples reduce the noise in the averaged
-        # bias estimate (roughly by 1/sqrt(N)), at the cost of a slightly
-        # longer stationary warmup at startup.
-        self.GYRO_CALIBRATION_SAMPLES = 400
+        # Increased 200 -> 400 -> 2000: more samples reduce the noise in the
+        # averaged bias estimate (roughly by 1/sqrt(N)), at the cost of a
+        # slightly longer stationary warmup at startup. Empirically, 2000
+        # samples brought the stationary yaw drift down to ~10 deg over
+        # ~8.5 minutes (~1.2 deg/min), a big improvement over the ~8-34
+        # deg/min seen before this calibration existed.
+        self.GYRO_CALIBRATION_SAMPLES = 2000
         self.get_logger().info(
             f"Calibrating gyro bias ({self.GYRO_CALIBRATION_SAMPLES} samples) - keep the robot completely stationary..."
         )
