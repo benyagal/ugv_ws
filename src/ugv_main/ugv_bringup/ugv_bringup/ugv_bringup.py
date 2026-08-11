@@ -120,7 +120,10 @@ class ugv_bringup(Node):
         self.gyro_bias_samples = {"gx": [], "gy": [], "gz": []}
         self.gyro_bias = {"gx": 0.0, "gy": 0.0, "gz": 0.0}
         self.gyro_calibrated = False
-        self.GYRO_CALIBRATION_SAMPLES = 200
+        # Increased from 200: more samples reduce the noise in the averaged
+        # bias estimate (roughly by 1/sqrt(N)), at the cost of a slightly
+        # longer stationary warmup at startup.
+        self.GYRO_CALIBRATION_SAMPLES = 400
         self.get_logger().info(
             f"Calibrating gyro bias ({self.GYRO_CALIBRATION_SAMPLES} samples) - keep the robot completely stationary..."
         )
