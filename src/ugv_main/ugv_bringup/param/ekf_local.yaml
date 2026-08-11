@@ -40,8 +40,7 @@ ekf_local_filter_node:
 
         imu0: /imu/data
         # Re-enabled yaw/vyaw to replace the removed wheel-based yaw, now
-        # using the magnetometer-corrected orientation (use_mag:=True in
-        # the launch file).
+        # using pure gyro (no magnetometer - ruled out, see launch file).
         imu0_config: [false, false, false,
                       false, false, true,
                       false, false, false,
@@ -50,7 +49,18 @@ ekf_local_filter_node:
         imu0_queue_size: 10
         imu0_nodelay: false
         imu0_differential: false
-        imu0_relative: true
+        # Changed from true: with imu0_relative, this filter tracks yaw
+        # relative to the FIRST /imu/data measurement received since node
+        # startup, independent of any later set_pose call - the set_pose
+        # (used to give an initial heading via RViz's "2D Pose Estimate")
+        # resets the filter's own state, but NOT this relative reference,
+        # so the two could disagree/interact badly. Confirmed via testing:
+        # raw /imu/data (bypassing the EKF) had the CORRECT sign convention
+        # for a physical rotation, but the full EKF+set_pose pipeline gave
+        # the OPPOSITE sign for the same real rotation direction - pointing
+        # squarely at this relative-reference vs. set_pose interaction.
+        # Fusing imu0 as an absolute measurement avoids this entirely.
+        imu0_relative: false
         imu0_pose_rejection_threshold: 20.0
         imu0_twist_rejection_threshold: 1.542
         imu0_linear_acceleration_rejection_threshold: 10.0
