@@ -107,6 +107,24 @@ class ugv_bringup(Node):
         self.voltage_publisher_ = self.create_publisher(Float32, "voltage", 50)
         # Initialize the base controller with the UART port and baud rate
         self.base_controller = BaseController(serial_port, 115200)
+
+        # Gyro bias calibration: the raw gyro has a non-negligible, seemingly
+        # variable zero-rate offset (empirically measured as ~8-34 deg/min of
+        # stationary yaw drift downstream). do_bias_estimation in the
+        # complementary filter doesn't fully remove it, so we additionally
+        # measure our own static offset here at startup (robot MUST be
+        # stationary for the first couple seconds after this node starts)
+        # and subtract it from every subsequent raw reading before it's ever
+        # published - this at least removes whatever the CURRENT session's
+        # offset happens to be, even though it may still vary run-to-run.
+        self.gyro_bias_samples = {"gx": [], "gy": [], "gz": []}
+        self.gyro_bias = {"gx": 0.0, "gy": 0.0, "gz": 0.0}
+        self.gyro_calibrated = False
+        self.GYRO_CALIBRATION_SAMPLES = 200
+        self.get_logger().info(
+            f"Calibrating gyro bias ({self.GYRO_CALIBRATION_SAMPLES} samples) - keep the robot completely stationary..."
+        )
+
         # Timer to periodically execute the feedback loop
         self.feedback_timer = self.create_timer(0.001, self.feedback_loop)
 
@@ -124,21 +142,43 @@ class ugv_bringup(Node):
 
     # Publish IMU data to the ROS topic "imu/data_raw"
     def publish_imu_data_raw(self):
+        imu_raw_data = self.base_controller.base_data
+
+        if not self.gyro_calibrated:
+            self.gyro_bias_samples["gx"].append(float(imu_raw_data["gx"]))
+            self.gyro_bias_samples["gy"].append(float(imu_raw_data["gy"]))
+            self.gyro_bias_samples["gz"].append(float(imu_raw_data["gz"]))
+            if len(self.gyro_bias_samples["gz"]) >= self.GYRO_CALIBRATION_SAMPLES:
+                for axis in ("gx", "gy", "gz"):
+                    samples = self.gyro_bias_samples[axis]
+                    self.gyro_bias[axis] = sum(samples) / len(samples)
+                self.gyro_calibrated = True
+                self.get_logger().info(
+                    f"Gyro bias calibration done: gx={self.gyro_bias['gx']:.2f} "
+                    f"gy={self.gyro_bias['gy']:.2f} gz={self.gyro_bias['gz']:.2f} (raw units)"
+                )
+            # Don't publish anything until calibration completes - the raw
+            # values aren't debiased yet, and publishing zeros/uncorrected
+            # data would just feed bogus measurements into the IMU filter.
+            return
+
         msg = Imu()
         msg.header = Header()
         msg.header.stamp = self.get_clock().now().to_msg()  # Get the current timestamp
         msg.header.frame_id = "base_imu_link"
-        imu_raw_data = self.base_controller.base_data
 
         # Populate the linear acceleration and angular velocity fields
         msg.linear_acceleration.x = 9.8 * float(imu_raw_data["ax"]) / 8192
         msg.linear_acceleration.y = 9.8 * float(imu_raw_data["ay"]) / 8192
         msg.linear_acceleration.z = 9.8 * float(imu_raw_data["az"]) / 8192
-        
-        msg.angular_velocity.x = 3.1415926 * float(imu_raw_data["gx"]) / (16.4 * 180)
-        msg.angular_velocity.y = 3.1415926 * float(imu_raw_data["gy"]) / (16.4 * 180)
-        msg.angular_velocity.z = 3.1415926 * float(imu_raw_data["gz"]) / (16.4 * 180)
-              
+
+        gx = float(imu_raw_data["gx"]) - self.gyro_bias["gx"]
+        gy = float(imu_raw_data["gy"]) - self.gyro_bias["gy"]
+        gz = float(imu_raw_data["gz"]) - self.gyro_bias["gz"]
+        msg.angular_velocity.x = 3.1415926 * gx / (16.4 * 180)
+        msg.angular_velocity.y = 3.1415926 * gy / (16.4 * 180)
+        msg.angular_velocity.z = 3.1415926 * gz / (16.4 * 180)
+
         self.imu_data_raw_publisher_.publish(msg)  # Publish the IMU data
         
     # Publish magnetic field data to the ROS topic "imu/mag"
