@@ -1,15 +1,31 @@
 #!/usr/bin/env python3
-"""Gripper arm control node - direct Jetson GPIO version (no PCA9685/I2C).
+"""Gripper arm control node - PCA9685 (I2C) servos + native Jetson GPIO for
+the relay-driven linear actuator and homing switch.
 
 Port of the "Smart Servo Controller V5" Arduino reference sketch
-(jetson_trial_2.ino), adapted to run natively on the Jetson via
-bit-banged software PWM instead of an I2C PCA9685 driver board (the
-PCA9685 board used previously is suspected dead/damaged).
+(jetson_trial_2.ino). Servos moved BACK to the PCA9685 I2C PWM driver board
+(this project's original hardware) after the Jetson-native bit-banged PWM
+version (a ServoPWM class previously in this file) turned out to cause the
+"electronics going wild" symptom it was meant to work around: Jetson.GPIO's
+GPIO.output() is not fast/precise enough for microsecond-accurate PWM, and
+running 3 concurrent bit-banging threads (roller + 2 arm servos, all with
+non-zero holding pulses from startup) produced enough timing jitter and
+electrical noise to also disturb the relay and homing switch lines. A
+dedicated PWM IC generates all 3 servo signals in hardware, removing the
+Jetson/Python timing from the loop entirely.
 
 Hardware (physical/BOARD pin numbers):
-  - Roller (continuous-rotation) servo, in/out          -> pin 32
-  - Left arm servo (180 degree)                         -> pin 24
-  - Right arm servo (180 degree, mirrored)               -> pin 26
+  - PCA9685 I2C bus: wired to physical pins 27 (SDA) / 28 (SCL) - NOT the
+    default/primary I2C bus (pins 3/5) that busio.I2C(board.SCL, board.SDA)
+    would auto-select. Pins 27/28 are the secondary/ID-EEPROM-style I2C bus
+    on the Jetson 40-pin header. Rather than relying on Adafruit Blinka's
+    per-board pin-name lookup (which may not fully recognize this carrier
+    board, same issue as Jetson.GPIO's own "not a Jetson Developer Kit"
+    warning), the I2C bus is opened directly by /dev/i2c-N number - see the
+    'i2c_bus' parameter below.
+  - Roller (continuous-rotation) servo     -> PCA9685 channel 0
+  - Left arm servo (180 degree)            -> PCA9685 channel 1
+  - Right arm servo (180 degree, mirrored) -> PCA9685 channel 2
   - 2 GPIO outputs driving the relay-controlled linear
     actuator (DC motor)                                  -> pins 29 / 31
   - 1 GPIO input for the homing microswitch              -> pin 33
@@ -20,13 +36,10 @@ Commands accepted as plain strings on the 'gripper_cmd' topic:
 
 Status/log messages are published on 'gripper_state'.
 
-NOTE: unlike the previous PCA9685-based implementation, the relay-driven
-linear actuator (push/pull) has NO automatic timeout here - it matches
-the V5 reference sketch exactly, which relies on 'mstop'/'stop' (or a
-physical end-stop) to halt it. Flag this if a timeout safety net is
-still wanted.
+NOTE: the relay-driven linear actuator (push/pull) still has NO automatic
+timeout - it relies on 'mstop'/'stop' (or a physical end-stop) to halt it.
+Not addressed here; flag if a timeout safety net is still wanted.
 """
-import threading
 import time
 
 import rclpy
@@ -34,6 +47,8 @@ from rclpy.node import Node
 from std_msgs.msg import String
 
 import Jetson.GPIO as GPIO
+from adafruit_blinka.microcontroller.generic_linux.i2c import I2C as LinuxI2C
+from adafruit_pca9685 import PCA9685
 
 # =====================================================
 # ROLLER (continuous rotation servo) CALIBRATION
@@ -94,45 +109,24 @@ def remap(value, in_min, in_max, out_min, out_max):
     return out_min + (value - in_min) * (out_max - out_min) / (in_max - in_min)
 
 
-class ServoPWM:
-    """Bit-banged software PWM, taking pulse widths in microseconds
-    (matching the Arduino Servo library's writeMicroseconds()).
-
-    Jetson.GPIO's own GPIO.PWM class (unlike RPi.GPIO's) only works on a
-    small, fixed set of hardware-PWM-capable pins - GPIO.PWM(24, 50) raises
-    "ValueError: Channel 24 is not a PWM" on this board, even though pin 32
-    is fine. Rather than special-casing which pins have hardware PWM, this
-    bit-bangs the signal via a background thread on ANY GPIO pin, so it
-    works uniformly regardless of hardware PWM capability.
+class PCA9685Servo:
+    """Thin wrapper around one PCA9685 channel, taking pulse widths in
+    microseconds (matching the Arduino Servo library's writeMicroseconds()
+    and the previous ServoPWM class's interface). All PWM timing happens in
+    hardware on the PCA9685 chip - no Python/GIL involvement, unlike the
+    bit-banged GPIO approach this replaces.
     """
 
-    def __init__(self, pin):
-        self.pin = pin
-        self._period_s = 1.0 / PWM_FREQ_HZ
-        self._pulse_s = 0.0
-        self._running = True
-        GPIO.setup(pin, GPIO.OUT, initial=GPIO.LOW)
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
-
-    def _run(self):
-        while self._running:
-            pulse_s = self._pulse_s
-            if pulse_s <= 0.0:
-                time.sleep(self._period_s)
-                continue
-            GPIO.output(self.pin, GPIO.HIGH)
-            time.sleep(pulse_s)
-            GPIO.output(self.pin, GPIO.LOW)
-            time.sleep(max(0.0, self._period_s - pulse_s))
+    def __init__(self, pca, channel):
+        self.pca = pca
+        self.channel = channel
 
     def write_microseconds(self, pulse_us):
-        self._pulse_s = clamp(pulse_us, 0.0, PWM_PERIOD_US) / 1_000_000.0
+        pulse_us = clamp(pulse_us, 0.0, PWM_PERIOD_US)
+        self.pca.channels[self.channel].duty_cycle = int(pulse_us / PWM_PERIOD_US * 0xFFFF)
 
     def stop(self):
-        self._running = False
-        self._thread.join(timeout=1.0)
-        GPIO.output(self.pin, GPIO.LOW)
+        self.pca.channels[self.channel].duty_cycle = 0
 
 
 class GripperNode(Node):
@@ -146,21 +140,30 @@ class GripperNode(Node):
         self.RELAY_OFF = GPIO.LOW
 
         # ---- parameters (hardware wiring) ----
-        self.declare_parameter('roller_pin', 32)
-        self.declare_parameter('left_pin', 24)
-        self.declare_parameter('right_pin', 26)
+        self.declare_parameter('roller_channel', 0)
+        self.declare_parameter('left_channel', 1)
+        self.declare_parameter('right_channel', 2)
         self.declare_parameter('relay1_pin', 29)
         self.declare_parameter('relay2_pin', 31)
         self.declare_parameter('home_switch_pin', 33)
+        # PCA9685 is wired to physical pins 27 (SDA) / 28 (SCL), which is a
+        # different /dev/i2c-N bus than the Jetson's default/primary I2C bus
+        # (pins 3/5) - adjust if it turns out to be a different bus number
+        # on this carrier board (verify with `i2cdetect -y <bus>` showing
+        # the device at i2c_address).
+        self.declare_parameter('i2c_bus', 0)
+        self.declare_parameter('i2c_address', 0x40)
 
-        self.roller_pin = self.get_parameter('roller_pin').value
-        self.left_pin = self.get_parameter('left_pin').value
-        self.right_pin = self.get_parameter('right_pin').value
+        self.roller_channel = self.get_parameter('roller_channel').value
+        self.left_channel = self.get_parameter('left_channel').value
+        self.right_channel = self.get_parameter('right_channel').value
         self.relay1_pin = self.get_parameter('relay1_pin').value
         self.relay2_pin = self.get_parameter('relay2_pin').value
         self.home_switch_pin = self.get_parameter('home_switch_pin').value
+        self.i2c_bus = self.get_parameter('i2c_bus').value
+        self.i2c_address = self.get_parameter('i2c_address').value
 
-        # ---- GPIO ----
+        # ---- GPIO (relay + homing switch only - servos are on the PCA9685) ----
         GPIO.setmode(GPIO.BOARD)
         GPIO.setup(self.relay1_pin, GPIO.OUT, initial=self.RELAY_OFF)
         GPIO.setup(self.relay2_pin, GPIO.OUT, initial=self.RELAY_OFF)
@@ -170,9 +173,18 @@ class GripperNode(Node):
         # is required for a reliable, non-floating reading.
         GPIO.setup(self.home_switch_pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
-        self.roller_servo = ServoPWM(self.roller_pin)
-        self.left_servo = ServoPWM(self.left_pin)
-        self.right_servo = ServoPWM(self.right_pin)
+        # ---- PCA9685 (I2C, bus wired to pins 27/28 - see module docstring) ----
+        self.get_logger().info(
+            f'Connecting to PCA9685 at 0x{self.i2c_address:02X} on I2C bus '
+            f'{self.i2c_bus} (pins 27/28)...'
+        )
+        i2c = LinuxI2C(self.i2c_bus)
+        self.pca = PCA9685(i2c, address=self.i2c_address)
+        self.pca.frequency = PWM_FREQ_HZ
+
+        self.roller_servo = PCA9685Servo(self.pca, self.roller_channel)
+        self.left_servo = PCA9685Servo(self.pca, self.left_channel)
+        self.right_servo = PCA9685Servo(self.pca, self.right_channel)
 
         # ---- roller state ----
         self.roller_state = ROLLER_STOPPED
@@ -480,6 +492,7 @@ class GripperNode(Node):
         self.roller_servo.stop()
         self.left_servo.stop()
         self.right_servo.stop()
+        self.pca.deinit()
         GPIO.cleanup()
         super().destroy_node()
 

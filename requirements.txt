@@ -4,3 +4,5 @@ mediapipe
 requests
 smbus2
 Jetson.GPIO
+adafruit-blinka
+adafruit-circuitpython-pca9685

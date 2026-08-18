@@ -6,12 +6,17 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    roller_pin_arg = DeclareLaunchArgument('roller_pin', default_value='32')
-    left_pin_arg = DeclareLaunchArgument('left_pin', default_value='24')
-    right_pin_arg = DeclareLaunchArgument('right_pin', default_value='26')
+    roller_channel_arg = DeclareLaunchArgument('roller_channel', default_value='0')
+    left_channel_arg = DeclareLaunchArgument('left_channel', default_value='1')
+    right_channel_arg = DeclareLaunchArgument('right_channel', default_value='2')
     relay1_pin_arg = DeclareLaunchArgument('relay1_pin', default_value='29')
     relay2_pin_arg = DeclareLaunchArgument('relay2_pin', default_value='31')
     home_switch_pin_arg = DeclareLaunchArgument('home_switch_pin', default_value='33')
+    # PCA9685 is wired to physical pins 27 (SDA) / 28 (SCL), not the
+    # default/primary I2C bus - adjust i2c_bus if this carrier board maps
+    # those pins to a different /dev/i2c-N than 0.
+    i2c_bus_arg = DeclareLaunchArgument('i2c_bus', default_value='0')
+    i2c_address_arg = DeclareLaunchArgument('i2c_address', default_value='64')  # 0x40
     with_joy_arg = DeclareLaunchArgument('with_joy', default_value='true')
 
     # On this carrier board (unrecognized by Jetson.GPIO - "not a Jetson
@@ -25,6 +30,11 @@ def generate_launch_description():
     # new pin must be re-derived the same way (run GPIO.setup(<pin>, OUT)
     # standalone and read the suggested "sudo busybox devmem ..." command
     # from the warning it prints).
+    #
+    # NOTE: the servos moved to a PCA9685 (I2C, pins 27/28) - I2C pins are
+    # fixed-function on this SoC (not GPIO-muxable), so no devmem fixup like
+    # this is expected to be needed for them. If PCA9685 communication fails
+    # at startup, that's the first thing to double check though.
     fix_relay1_pinmux = ExecuteProcess(
         cmd=['busybox', 'devmem', '0x2430068', 'w', '0x8'],  # physical pin 29
         output='screen',
@@ -35,36 +45,18 @@ def generate_launch_description():
         output='screen',
     )
 
-    # Servo pins also boot with their pinmux set to input (same root cause
-    # as the relay pins, but a different register block/value - derived by
-    # running GPIO.setup(<pin>, GPIO.OUT) standalone for each pin and
-    # reading the exact "busybox devmem <addr> w <val>" from the resulting
-    # UserWarning).
-    fix_roller_pinmux = ExecuteProcess(
-        cmd=['busybox', 'devmem', '0x2434080', 'w', '0x5'],  # physical pin 32
-        output='screen',
-    )
-
-    fix_left_pinmux = ExecuteProcess(
-        cmd=['busybox', 'devmem', '0x243D008', 'w', '0x9'],  # physical pin 24
-        output='screen',
-    )
-
-    fix_right_pinmux = ExecuteProcess(
-        cmd=['busybox', 'devmem', '0x243D038', 'w', '0x9'],  # physical pin 26
-        output='screen',
-    )
-
     gripper_node = Node(
         package='ugv_gripper',
         executable='gripper_node',
         parameters=[{
-            'roller_pin': LaunchConfiguration('roller_pin'),
-            'left_pin': LaunchConfiguration('left_pin'),
-            'right_pin': LaunchConfiguration('right_pin'),
+            'roller_channel': LaunchConfiguration('roller_channel'),
+            'left_channel': LaunchConfiguration('left_channel'),
+            'right_channel': LaunchConfiguration('right_channel'),
             'relay1_pin': LaunchConfiguration('relay1_pin'),
             'relay2_pin': LaunchConfiguration('relay2_pin'),
             'home_switch_pin': LaunchConfiguration('home_switch_pin'),
+            'i2c_bus': LaunchConfiguration('i2c_bus'),
+            'i2c_address': LaunchConfiguration('i2c_address'),
         }],
         output='screen',
     )
@@ -81,18 +73,17 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
-        roller_pin_arg,
-        left_pin_arg,
-        right_pin_arg,
+        roller_channel_arg,
+        left_channel_arg,
+        right_channel_arg,
         relay1_pin_arg,
         relay2_pin_arg,
         home_switch_pin_arg,
+        i2c_bus_arg,
+        i2c_address_arg,
         with_joy_arg,
         fix_relay1_pinmux,
         fix_relay2_pinmux,
-        fix_roller_pinmux,
-        fix_left_pinmux,
-        fix_right_pinmux,
         delayed_gripper_node,
         gripper_joy_node,
     ])
