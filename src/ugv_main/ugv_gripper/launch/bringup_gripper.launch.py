@@ -12,10 +12,12 @@ def generate_launch_description():
     relay1_pin_arg = DeclareLaunchArgument('relay1_pin', default_value='29')
     relay2_pin_arg = DeclareLaunchArgument('relay2_pin', default_value='31')
     home_switch_pin_arg = DeclareLaunchArgument('home_switch_pin', default_value='33')
-    # PCA9685 is wired to physical pins 27 (SDA) / 28 (SCL), not the
-    # default/primary I2C bus - adjust i2c_bus if this carrier board maps
-    # those pins to a different /dev/i2c-N than 0.
-    i2c_bus_arg = DeclareLaunchArgument('i2c_bus', default_value='0')
+    # PCA9685 is wired to physical pins 27 (SDA) / 28 (SCL). Bus 7 confirmed
+    # empirically via `i2cget -y 7 0x40 0x00` returning 0x11 (the PCA9685's
+    # documented power-on-reset MODE1 default) - verify the same way with
+    # `i2cget`, not `i2cdetect` (which doesn't detect this chip via its
+    # default quick-write probe).
+    i2c_bus_arg = DeclareLaunchArgument('i2c_bus', default_value='7')
     i2c_address_arg = DeclareLaunchArgument('i2c_address', default_value='64')  # 0x40
     with_joy_arg = DeclareLaunchArgument('with_joy', default_value='true')
 

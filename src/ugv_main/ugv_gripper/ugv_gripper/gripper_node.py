@@ -17,12 +17,18 @@ Jetson/Python timing from the loop entirely.
 Hardware (physical/BOARD pin numbers):
   - PCA9685 I2C bus: wired to physical pins 27 (SDA) / 28 (SCL) - NOT the
     default/primary I2C bus (pins 3/5) that busio.I2C(board.SCL, board.SDA)
-    would auto-select. Pins 27/28 are the secondary/ID-EEPROM-style I2C bus
-    on the Jetson 40-pin header. Rather than relying on Adafruit Blinka's
-    per-board pin-name lookup (which may not fully recognize this carrier
-    board, same issue as Jetson.GPIO's own "not a Jetson Developer Kit"
-    warning), the I2C bus is opened directly by /dev/i2c-N number - see the
-    'i2c_bus' parameter below.
+    would auto-select. Rather than relying on Adafruit Blinka's per-board
+    pin-name lookup (which may not fully recognize this carrier board, same
+    issue as Jetson.GPIO's own "not a Jetson Developer Kit" warning), the
+    I2C bus is opened directly by /dev/i2c-N number - see the 'i2c_bus'
+    parameter below. Empirically confirmed (via `i2cget -y 7 0x40 0x00`
+    returning 0x11, the documented PCA9685 power-on-reset MODE1 default) to
+    be bus 7 on this carrier board - NOT bus 0, despite bus 0 having an
+    ID-EEPROM-like device at 0x50 (that's a red herring; it doesn't mean
+    bus 0 is the one wired to pins 27/28). `i2cdetect` itself doesn't show
+    the PCA9685 on bus 7 (it doesn't respond to the SMBus "quick write"
+    probe i2cdetect uses by default), so use `i2cget`/`i2cset` for manual
+    testing instead, not `i2cdetect`.
   - Roller (continuous-rotation) servo     -> PCA9685 channel 0
   - Left arm servo (180 degree)            -> PCA9685 channel 1
   - Right arm servo (180 degree, mirrored) -> PCA9685 channel 2
@@ -221,12 +227,12 @@ class GripperNode(Node):
         self.declare_parameter('relay1_pin', 29)
         self.declare_parameter('relay2_pin', 31)
         self.declare_parameter('home_switch_pin', 33)
-        # PCA9685 is wired to physical pins 27 (SDA) / 28 (SCL), which is a
-        # different /dev/i2c-N bus than the Jetson's default/primary I2C bus
-        # (pins 3/5) - adjust if it turns out to be a different bus number
-        # on this carrier board (verify with `i2cdetect -y <bus>` showing
-        # the device at i2c_address).
-        self.declare_parameter('i2c_bus', 0)
+        # PCA9685 is wired to physical pins 27 (SDA) / 28 (SCL). Bus 7
+        # confirmed empirically via `i2cget -y 7 0x40 0x00` returning 0x11
+        # (the PCA9685's documented power-on-reset MODE1 default) - verify
+        # the same way with `i2cget`, not `i2cdetect` (which doesn't detect
+        # this chip via its default quick-write probe).
+        self.declare_parameter('i2c_bus', 7)
         self.declare_parameter('i2c_address', 0x40)
 
         self.roller_channel = self.get_parameter('roller_channel').value
@@ -258,18 +264,21 @@ class GripperNode(Node):
             self.pca = PCA9685(i2c, address=self.i2c_address)
         except OSError as exc:
             # errno 121 (EREMOTEIO) means no device ACK'd at i2c_address on
-            # i2c_bus - i.e. `i2cdetect -y <i2c_bus>` would show a blank
-            # entry there too. This is a wiring/power problem, not a code
-            # bug: check the PCA9685's logic VCC/GND, SDA/SCL continuity to
-            # pins 27/28, pull-up resistors on that bus, and its A0-A5
-            # address jumpers (all open = 0x40).
+            # i2c_bus. This is a wiring/power problem, not a code bug: check
+            # the PCA9685's logic VCC/GND, SDA/SCL continuity to pins 27/28,
+            # pull-up resistors on that bus, and its A0-A5 address jumpers
+            # (all open = 0x40). Verify manually with
+            # `i2cget -y <i2c_bus> 0x<i2c_address> 0x00` (NOT `i2cdetect`,
+            # which doesn't detect this chip via its default quick-write
+            # probe) - it should return 0x11 (PCA9685 power-on MODE1
+            # default) if the chip is present and responding.
             self.get_logger().error(
                 f'PCA9685 did not respond at 0x{self.i2c_address:02X} on '
                 f'I2C bus {self.i2c_bus} ({exc}). Check with '
-                f'`i2cdetect -y {self.i2c_bus}` - if that also shows '
-                'nothing, this is a wiring/power issue (logic VCC/GND, '
-                'SDA/SCL continuity, pull-ups, address jumpers), not a '
-                'software bug.'
+                f'`i2cget -y {self.i2c_bus} 0x{self.i2c_address:02X} 0x00` '
+                '(expect 0x11) - if that also fails, this is a wiring/power '
+                'issue (logic VCC/GND, SDA/SCL continuity, pull-ups, '
+                'address jumpers), not a software bug.'
             )
             raise
         self.pca.frequency = PWM_FREQ_HZ
