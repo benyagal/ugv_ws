@@ -40,8 +40,8 @@ import Jetson.GPIO as GPIO
 # Only these three values determine direction.
 # =====================================================
 ROLLER_STOP_US = 1700
-ROLLER_FULL_IN_US = 1000
-ROLLER_FULL_OUT_US = 2200
+ROLLER_FULL_IN_US = 1300
+ROLLER_FULL_OUT_US = 1900
 
 # =====================================================
 # ARM (mirrored 180 degree servos) CALIBRATION
