@@ -47,8 +47,18 @@ from rclpy.node import Node
 from std_msgs.msg import String
 
 import Jetson.GPIO as GPIO
-from adafruit_blinka.microcontroller.generic_linux.i2c import I2C as LinuxI2C
-from adafruit_pca9685 import PCA9685
+
+# Jetson.GPIO's pin-numbering mode can only be set ONCE per process. Adafruit
+# Blinka's Jetson backend also calls GPIO.setmode() internally (with a
+# different mode) as a side effect of merely importing it - if that happens
+# first, our own GPIO.setmode(GPIO.BOARD) call later in __init__ would raise
+# "ValueError: A different mode has already been set!". Setting BOARD mode
+# here, before the adafruit_blinka/adafruit_pca9685 imports below, makes
+# sure ours wins instead.
+GPIO.setmode(GPIO.BOARD)
+
+from adafruit_blinka.microcontroller.generic_linux.i2c import I2C as LinuxI2C  # noqa: E402
+from adafruit_pca9685 import PCA9685  # noqa: E402
 
 # =====================================================
 # ROLLER (continuous rotation servo) CALIBRATION
@@ -164,7 +174,7 @@ class GripperNode(Node):
         self.i2c_address = self.get_parameter('i2c_address').value
 
         # ---- GPIO (relay + homing switch only - servos are on the PCA9685) ----
-        GPIO.setmode(GPIO.BOARD)
+        # (numbering mode already set to BOARD at module import time, above)
         GPIO.setup(self.relay1_pin, GPIO.OUT, initial=self.RELAY_OFF)
         GPIO.setup(self.relay2_pin, GPIO.OUT, initial=self.RELAY_OFF)
         # NOTE: Jetson.GPIO ignores pull_up_down on this platform/carrier
