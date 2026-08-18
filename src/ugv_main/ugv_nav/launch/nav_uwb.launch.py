@@ -81,7 +81,11 @@ def generate_launch_description():
             'use_sim_time': LaunchConfiguration('use_sim_time'),
             'autostart': LaunchConfiguration('autostart'),
             'params_file': LaunchConfiguration('params_file'),
-            'use_composition': 'false',
+            # navigation_launch.py evaluates this via PythonExpression(['not
+            # ', use_composition]) i.e. a real Python eval() - it must be the
+            # capitalized Python literal 'False', not lowercase 'false'
+            # (which raised "name 'false' is not defined").
+            'use_composition': 'False',
         }.items()
     )
 
