@@ -317,13 +317,13 @@ class GripperNode(Node):
     def update_relay(self):
         if self.relay_state == RELAY_STOPPED:
             GPIO.output(self.relay1_pin, self.RELAY_OFF)
-            GPIO.output(self.relay2_pin, self.RELAY_OFF)
+            GPIO.output(self.relay2_pin, self.RELAY_ON)
         elif self.relay_state == RELAY_PUSH:
             GPIO.output(self.relay1_pin, self.RELAY_ON)
-            GPIO.output(self.relay2_pin, self.RELAY_OFF)
+            GPIO.output(self.relay2_pin, self.RELAY_ON)
         elif self.relay_state == RELAY_PULL:
             GPIO.output(self.relay1_pin, self.RELAY_OFF)
-            GPIO.output(self.relay2_pin, self.RELAY_ON)
+            GPIO.output(self.relay2_pin, self.RELAY_OFF)
 
     def relay_push(self):
         self.relay_state = RELAY_PUSH
