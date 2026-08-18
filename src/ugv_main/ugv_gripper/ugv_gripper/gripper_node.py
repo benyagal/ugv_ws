@@ -254,7 +254,24 @@ class GripperNode(Node):
             f'{self.i2c_bus} (pins 27/28)...'
         )
         i2c = LinuxI2C(self.i2c_bus)
-        self.pca = PCA9685(i2c, address=self.i2c_address)
+        try:
+            self.pca = PCA9685(i2c, address=self.i2c_address)
+        except OSError as exc:
+            # errno 121 (EREMOTEIO) means no device ACK'd at i2c_address on
+            # i2c_bus - i.e. `i2cdetect -y <i2c_bus>` would show a blank
+            # entry there too. This is a wiring/power problem, not a code
+            # bug: check the PCA9685's logic VCC/GND, SDA/SCL continuity to
+            # pins 27/28, pull-up resistors on that bus, and its A0-A5
+            # address jumpers (all open = 0x40).
+            self.get_logger().error(
+                f'PCA9685 did not respond at 0x{self.i2c_address:02X} on '
+                f'I2C bus {self.i2c_bus} ({exc}). Check with '
+                f'`i2cdetect -y {self.i2c_bus}` - if that also shows '
+                'nothing, this is a wiring/power issue (logic VCC/GND, '
+                'SDA/SCL continuity, pull-ups, address jumpers), not a '
+                'software bug.'
+            )
+            raise
         self.pca.frequency = PWM_FREQ_HZ
 
         self.roller_servo = PCA9685Servo(self.pca, self.roller_channel)
