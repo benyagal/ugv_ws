@@ -39,9 +39,9 @@ import Jetson.GPIO as GPIO
 # ROLLER (continuous rotation servo) CALIBRATION
 # Only these three values determine direction.
 # =====================================================
-ROLLER_STOP_US = 200
-ROLLER_FULL_IN_US = 600
-ROLLER_FULL_OUT_US = 1500
+ROLLER_STOP_US = 1000
+ROLLER_FULL_IN_US = 1500
+ROLLER_FULL_OUT_US = 2000
 
 # =====================================================
 # ARM (mirrored 180 degree servos) CALIBRATION
