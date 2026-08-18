@@ -47,18 +47,22 @@ from rclpy.node import Node
 from std_msgs.msg import String
 
 import Jetson.GPIO as GPIO
-
-# Jetson.GPIO's pin-numbering mode can only be set ONCE per process. Adafruit
-# Blinka's Jetson backend also calls GPIO.setmode() internally (with a
-# different mode) as a side effect of merely importing it - if that happens
-# first, our own GPIO.setmode(GPIO.BOARD) call later in __init__ would raise
-# "ValueError: A different mode has already been set!". Setting BOARD mode
-# here, before the adafruit_blinka/adafruit_pca9685 imports below, makes
-# sure ours wins instead.
 GPIO.setmode(GPIO.BOARD)
 
-from adafruit_blinka.microcontroller.generic_linux.i2c import I2C as LinuxI2C  # noqa: E402
-from adafruit_pca9685 import PCA9685  # noqa: E402
+# NOTE: deliberately NOT using the adafruit_pca9685 package here. It
+# unconditionally imports Blinka's full CircuitPython compatibility stack
+# (adafruit_register -> circuitpython_typing -> adafruit_bus_device ->
+# digitalio), and digitalio's Jetson backend
+# (adafruit_blinka.microcontroller.tegra.*.pin) unconditionally calls
+# Jetson.GPIO.setmode(GPIO.TEGRA_SOC) at import time, with NO check for an
+# already-set mode - confirmed via an actual crash traceback on this
+# hardware. Since Jetson.GPIO only allows one numbering mode per process,
+# this conflicts with the GPIO.setmode(GPIO.BOARD) needed for the
+# relay/home-switch pins no matter the import order. Only the low-level,
+# generic_linux I2C bus class is used below (bytes in/out over /dev/i2c-N),
+# and the PCA9685 registers are driven directly (see the PCA9685 class) -
+# this avoids the whole digitalio/pin dependency chain entirely.
+from adafruit_blinka.microcontroller.generic_linux.i2c import I2C as LinuxI2C
 
 # =====================================================
 # ROLLER (continuous rotation servo) CALIBRATION
@@ -119,6 +123,66 @@ def remap(value, in_min, in_max, out_min, out_max):
     return out_min + (value - in_min) * (out_max - out_min) / (in_max - in_min)
 
 
+class PCA9685:
+    """Minimal register-level PCA9685 driver, talking directly to the chip
+    over the generic_linux I2C bus object (see the module-level NOTE above
+    for why this doesn't use Adafruit's own adafruit_pca9685 package).
+
+    Only what this node needs is implemented: setting the PWM frequency and
+    writing raw ON/OFF counts per channel - see the NXP PCA9685 datasheet
+    for the register map this is based on.
+    """
+
+    _MODE1 = 0x00
+    _PRESCALE = 0xFE
+    _LED0_ON_L = 0x06
+    _RESTART = 0x80
+    _SLEEP = 0x10
+    _ALLCALL = 0x01
+    _INTERNAL_OSC_HZ = 25_000_000.0
+
+    def __init__(self, i2c, address=0x40, frequency=50):
+        self.i2c = i2c
+        self.address = address
+        self._write8(self._MODE1, self._ALLCALL)
+        time.sleep(0.005)
+        self.frequency = frequency
+
+    def _write8(self, reg, value):
+        self.i2c.writeto(self.address, bytes([reg, value & 0xFF]))
+
+    def _read8(self, reg):
+        buf_in = bytearray(1)
+        self.i2c.writeto_then_readfrom(self.address, bytes([reg]), buf_in)
+        return buf_in[0]
+
+    @property
+    def frequency(self):
+        return self._frequency
+
+    @frequency.setter
+    def frequency(self, freq_hz):
+        prescale = int(round(self._INTERNAL_OSC_HZ / (4096 * freq_hz)) - 1)
+        old_mode = self._read8(self._MODE1)
+        self._write8(self._MODE1, (old_mode & 0x7F) | self._SLEEP)
+        self._write8(self._PRESCALE, prescale)
+        self._write8(self._MODE1, old_mode)
+        time.sleep(0.005)
+        self._write8(self._MODE1, old_mode | self._RESTART)
+        self._frequency = freq_hz
+
+    def set_pwm(self, channel, on, off):
+        base = self._LED0_ON_L + 4 * channel
+        self.i2c.writeto(self.address, bytes([
+            base, on & 0xFF, (on >> 8) & 0xFF, off & 0xFF, (off >> 8) & 0xFF,
+        ]))
+
+    def deinit(self):
+        for channel in range(16):
+            self.set_pwm(channel, 0, 0)
+        self._write8(self._MODE1, self._SLEEP)
+
+
 class PCA9685Servo:
     """Thin wrapper around one PCA9685 channel, taking pulse widths in
     microseconds (matching the Arduino Servo library's writeMicroseconds()
@@ -133,10 +197,11 @@ class PCA9685Servo:
 
     def write_microseconds(self, pulse_us):
         pulse_us = clamp(pulse_us, 0.0, PWM_PERIOD_US)
-        self.pca.channels[self.channel].duty_cycle = int(pulse_us / PWM_PERIOD_US * 0xFFFF)
+        off_count = int(pulse_us / PWM_PERIOD_US * 4096)
+        self.pca.set_pwm(self.channel, 0, off_count)
 
     def stop(self):
-        self.pca.channels[self.channel].duty_cycle = 0
+        self.pca.set_pwm(self.channel, 0, 0)
 
 
 class GripperNode(Node):
@@ -229,7 +294,7 @@ class GripperNode(Node):
 
         self.create_timer(TICK_PERIOD, self.update)
 
-        self.log('Smart Servo Controller V5 Ready (Jetson native)')
+        self.log('Smart Servo Controller V5 Ready (PCA9685 + Jetson native GPIO)')
 
     # =====================================================
     # Helpers
