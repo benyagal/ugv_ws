@@ -24,6 +24,7 @@ setup(
     entry_points={
         'console_scripts': [
             'gripper_node = ugv_gripper.gripper_node:main',
+            'gripper_arduino_node = ugv_gripper.gripper_arduino_node:main',
             'gripper_joy_ctrl = ugv_gripper.gripper_joy_ctrl:main',
         ],
     },
