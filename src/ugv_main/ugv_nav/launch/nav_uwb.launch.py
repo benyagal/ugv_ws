@@ -21,6 +21,14 @@ def generate_launch_description():
         description='Whether to launch RViz2'
     )
 
+    rviz_config_arg = DeclareLaunchArgument(
+        'rviz_config',
+        default_value='nav_2d',
+        description='Which RViz configuration to use (see ugv_description display.launch.py) - '
+                     'defaults to the top-down 2D nav view with the map displayed, not the '
+                     'generic 3D bringup view'
+    )
+
     use_sim_time_arg = DeclareLaunchArgument(
         'use_sim_time',
         default_value='false',
@@ -60,6 +68,7 @@ def generate_launch_description():
         ),
         launch_arguments={
             'use_rviz': LaunchConfiguration('use_rviz'),
+            'rviz_config': LaunchConfiguration('rviz_config'),
             'use_sim_time': LaunchConfiguration('use_sim_time'),
             'use_uwb_sim': LaunchConfiguration('use_uwb_sim'),
             'map': LaunchConfiguration('map'),
@@ -91,6 +100,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         use_rviz_arg,
+        rviz_config_arg,
         use_sim_time_arg,
         use_uwb_sim_arg,
         map_arg,
