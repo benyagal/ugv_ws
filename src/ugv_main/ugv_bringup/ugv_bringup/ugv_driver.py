@@ -41,12 +41,13 @@ class UgvDriver(Node):
 
     # Callback for processing velocity commands
     def cmd_vel_callback(self, msg):
-        linear_velocity = msg.linear.x
-        # NOTE: physical rotation direction was found reversed vs. cmd_vel
-        # intent on the OLD board (cannot be corrected in firmware/wiring) -
-        # kept as-is, but MUST be re-verified once the new board is wired in,
-        # the sign convention may not carry over.
+        # NOTE: physical direction was found reversed vs. cmd_vel intent on
+        # the NEW board too (confirmed empirically 2026-09-11: commanding
+        # +0.2 m/s forward drove the robot backward, all 4 wheels attached) -
+        # inverted here in software rather than rewiring the motors.
+        linear_velocity = -msg.linear.x
         angular_velocity = -msg.angular.z
+
 
         # Apply minimum threshold to angular velocity if linear velocity is zero
         if linear_velocity == 0:
