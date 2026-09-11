@@ -12,9 +12,11 @@ from Rosmaster_Lib import Rosmaster
 # See /memories/repo/rosmaster_motor_controller.md for the full investigation.
 CAR_TYPE = 4
 
-# TODO: confirm the actual serial port once the board is physically installed
-# (run ugv_tools' test_rosmaster_board.py). This is Rosmaster_Lib's own default.
-SERIAL_PORT = '/dev/myserial'
+# Confirmed via `ls -l /dev/ttyUSB*` on the Jetson (2026-09-11) - the board has
+# no udev rule yet, so this is the raw USB-serial enumeration, NOT guaranteed
+# to stay ttyUSB0 if other USB-serial devices are plugged in a different order.
+# TODO: add a udev rule (see ldlidar.rules for the pattern) for a stable symlink.
+SERIAL_PORT = '/dev/ttyUSB0'
 
 # Rough placeholder wheel-distance-per-encoder-pulse scale, from Yahboom's OWN
 # 330RPM motor spec (app_motion.h: DISTANCE_CIRCLE=0.204203m / ENCODER_CIRCLE_330

@@ -29,9 +29,9 @@ except ImportError:
     print("Rosmaster_Lib not importable - install it first (see Rosmaster_install.txt)")
     sys.exit(1)
 
-# Candidate ports to try, in order, since the actual enumeration on this
-# board/Jetson combo is not yet confirmed.
-CANDIDATE_PORTS = ['/dev/myserial', '/dev/ttyUSB0', '/dev/ttyACM0', '/dev/ttyTHS1']
+# Confirmed enumeration on the Jetson (2026-09-11): /dev/ttyUSB0, no udev rule.
+# Kept as a candidate list in case a udev symlink gets added later.
+CANDIDATE_PORTS = ['/dev/ttyUSB0', '/dev/myserial', '/dev/ttyACM0', '/dev/ttyTHS1']
 
 # Must match ugv_bringup.py/ugv_driver.py's CAR_TYPE - the firmware selects
 # its wheel-mixing algorithm from this value on every set_car_motion() call,

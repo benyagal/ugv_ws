@@ -13,7 +13,7 @@ from Rosmaster_Lib import Rosmaster
 # /memories/repo/rosmaster_motor_controller.md for the investigation behind
 # these values.
 CAR_TYPE = 4
-SERIAL_PORT = '/dev/myserial'
+SERIAL_PORT = '/dev/ttyUSB0'
 
 
 class UgvDriver(Node):
