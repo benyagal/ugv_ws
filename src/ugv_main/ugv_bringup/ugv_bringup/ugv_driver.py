@@ -2,29 +2,30 @@
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
-import serial  
-import json  
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float32, Float32MultiArray
 import subprocess
 import time
-import os
 
-def is_jetson():
-    result = any("ugv_jetson" in root for root, dirs, files in os.walk("/"))
-    return result
+from Rosmaster_Lib import Rosmaster
 
-if is_jetson():
-    serial_port = '/dev/ttyTHS1'
-else:
-    serial_port = '/dev/ttyAMA0'
+# Must match ugv_bringup.py's car_type/port - see
+# /memories/repo/rosmaster_motor_controller.md for the investigation behind
+# these values.
+CAR_TYPE = 4
+SERIAL_PORT = '/dev/myserial'
 
-# Initialize serial communication with the UGV
-ser = serial.Serial(serial_port, 115200, timeout=1)
 
 class UgvDriver(Node):
     def __init__(self, name):
         super().__init__(name)
+        self.car = Rosmaster(car_type=CAR_TYPE, com=SERIAL_PORT)
+        self.car.create_receive_threading()
+
+        # Only log the "not implemented" servo/LED warnings once each,
+        # instead of spamming on every message.
+        self._warned_joint_states = False
+        self._warned_led_ctrl = False
 
         # Subscribe to velocity commands (cmd_vel topic)
         self.cmd_vel_sub_ = self.create_subscription(Twist, "cmd_vel", self.cmd_vel_callback, 10)
@@ -42,8 +43,9 @@ class UgvDriver(Node):
     def cmd_vel_callback(self, msg):
         linear_velocity = msg.linear.x
         # NOTE: physical rotation direction was found reversed vs. cmd_vel
-        # intent after the motor swap (cannot be corrected in firmware/wiring),
-        # so we invert the sign here in software before sending it on.
+        # intent on the OLD board (cannot be corrected in firmware/wiring) -
+        # kept as-is, but MUST be re-verified once the new board is wired in,
+        # the sign convention may not carry over.
         angular_velocity = -msg.angular.z
 
         # Apply minimum threshold to angular velocity if linear velocity is zero
@@ -53,54 +55,31 @@ class UgvDriver(Node):
             elif -0.2 < angular_velocity < 0:
                 angular_velocity = -0.2
 
-        # Send the velocity data to the UGV as a JSON string
-        data = json.dumps({'T': '13', 'X': linear_velocity, 'Z': angular_velocity}) + "\n"
-        ser.write(data.encode())
+        # set_car_motion takes real m/s / rad/s directly (confirmed from
+        # Yahboom's own reference driver) - no scaling needed. vy is always
+        # 0 since CAR_FOURWHEEL ignores it (pure differential drive).
+        self.car.set_car_motion(linear_velocity, 0.0, angular_velocity)
 
     # Callback for processing joint state updates
     def joint_states_callback(self, msg):
-        header = {
-            'stamp': {
-                'sec': msg.header.stamp.sec,
-                'nanosec': msg.header.stamp.nanosec,
-            },
-            'frame_id': msg.header.frame_id,
-        }
-
-        # Extract joint positions and convert to degrees
-        name = msg.name
-        position = msg.position
-
-        x_rad = position[name.index('pt_base_link_to_pt_link1')]
-        y_rad = position[name.index('pt_link1_to_pt_link2')]
-
-        x_degree = (180 * x_rad) / 3.1415926
-        y_degree = (180 * y_rad) / 3.1415926
-
-        # Send the joint data as a JSON string to the UGV
-        joint_data = json.dumps({
-            'T': 134, 
-            'X': x_degree, 
-            'Y': y_degree, 
-            "SX": 600,
-            "SY": 600,
-        }) + "\n"
-                
-        ser.write(joint_data.encode())
+        # TODO: pan-tilt camera servo control not yet implemented for the new
+        # board. Old board used a JSON T:134 command; Rosmaster_Lib's API is
+        # different (set_pwm_servo/set_uart_servo_angle), and it's unconfirmed
+        # whether the pan-tilt servo is even wired to the new board.
+        if not self._warned_joint_states:
+            self.get_logger().warn(
+                "joint_states_callback: pan-tilt servo control not yet implemented for the new Rosmaster board"
+            )
+            self._warned_joint_states = True
 
     # Callback for processing LED control commands
     def led_ctrl_callback(self, msg):
-        IO4 = msg.data[0]
-        IO5 = msg.data[1]
-        
-        # Send LED control data as a JSON string to the UGV
-        led_ctrl_data = json.dumps({
-            'T': 132, 
-            "IO4": IO4,
-            "IO5": IO5,
-        }) + "\n"
-                
-        ser.write(led_ctrl_data.encode())
+        # TODO: same as above - LED wiring/API unconfirmed for the new board.
+        if not self._warned_led_ctrl:
+            self.get_logger().warn(
+                "led_ctrl_callback: LED control not yet implemented for the new Rosmaster board"
+            )
+            self._warned_led_ctrl = True
 
     # Callback for processing voltage data
     def voltage_callback(self, msg):
@@ -122,7 +101,6 @@ def main(args=None):
     finally:
         node.destroy_node()
         rclpy.shutdown()
-        ser.close()  # Close the serial connection
 
 if __name__ == '__main__':
     main()

@@ -29,6 +29,10 @@ setup(
             'localization_test = ugv_tools.localization_test:main',
             'localization_accuracy_test = ugv_tools.localization_accuracy_test:main',
             'localization_drive_test = ugv_tools.localization_drive_test:main',
+            'generate_manual_map = ugv_tools.generate_manual_map:main',
+            'visualize_manual_map = ugv_tools.visualize_manual_map:main',
+            'compute_map_origin = ugv_tools.compute_map_origin:main',
+            'test_rosmaster_board = ugv_tools.test_rosmaster_board:main',
         ],
     },
 )
