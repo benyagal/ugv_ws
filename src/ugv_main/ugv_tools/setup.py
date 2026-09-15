@@ -36,6 +36,7 @@ setup(
             'calibrate_linear_speed = ugv_tools.calibrate_linear_speed:main',
             'calibrate_angular_speed = ugv_tools.calibrate_angular_speed:main',
             'profile_motion_response = ugv_tools.profile_motion_response:main',
+            'tune_motor_pid = ugv_tools.tune_motor_pid:main',
         ],
     },
 )
