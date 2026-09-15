@@ -135,11 +135,11 @@ class UgvDriver(Node):
     # Callback for processing velocity commands - just records the latest
     # target; the actual motor control happens in control_loop() below.
     def cmd_vel_callback(self, msg):
-        # NOTE: physical direction was found reversed vs. cmd_vel intent on
-        # the NEW board too (confirmed empirically 2026-09-11: commanding
-        # +0.2 m/s forward drove the robot backward, all 4 wheels attached) -
-        # inverted here in software rather than rewiring the motors.
-        self.target_linear = -msg.linear.x
+        # target_linear positive = forward (physical direction was found
+        # reversed vs. cmd_vel intent, confirmed empirically 2026-09-11 - the
+        # inversion is applied once, in control_loop()'s left/right mixing,
+        # NOT here too - doing it in both places would cancel out).
+        self.target_linear = msg.linear.x
         self.target_angular = -msg.angular.z
         self.last_cmd_vel_time = time.monotonic()
 
