@@ -19,8 +19,9 @@ actual_speed = a * commanded_speed + b (simple linear regression) and prints:
     motion, as a deadband warning
 
 Run with: python3 calibrate_linear_speed.py
-Needs open, flat, clear floor space - each run needs distance = SPEEDS[-1] * DURATION
-metres of clearance in front of the robot, plus margin.
+Needs open, flat, clear floor space - the longest run needs SPEEDS[-1] * DURATION
+metres of clearance in front of the robot, plus margin. Sized (0.1-0.25 m/s,
+5s) for a ~3.5-4m corridor.
 """
 import sys
 import time
@@ -35,10 +36,11 @@ except ImportError:
 CANDIDATE_PORTS = ['/dev/ttyUSB0', '/dev/myserial', '/dev/ttyACM0', '/dev/ttyTHS1']
 CAR_TYPE = 4
 
-# Realistic operating speeds (m/s), not crawl speeds - avoids the deadband
-# zone found during the 2026-09-15 low-speed test.
-SPEEDS = [0.15, 0.2, 0.3, 0.4]
-DURATION = 5.0  # seconds per run
+# Realistic operating speeds (m/s) - 0.1 m/s was already confirmed NOT to be
+# in the deadband zone (2026-09-15 ground test), so it's a safe lower bound.
+# Kept low to fit a ~3.5-4m corridor: longest run covers SPEEDS[-1]*DURATION = 1.25m.
+SPEEDS = [0.1, 0.15, 0.2, 0.25]
+DURATION = 4.0  # seconds per run
 
 
 def connect():

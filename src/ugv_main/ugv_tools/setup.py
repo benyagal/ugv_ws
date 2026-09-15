@@ -34,6 +34,7 @@ setup(
             'compute_map_origin = ugv_tools.compute_map_origin:main',
             'test_rosmaster_board = ugv_tools.test_rosmaster_board:main',
             'calibrate_linear_speed = ugv_tools.calibrate_linear_speed:main',
+            'calibrate_angular_speed = ugv_tools.calibrate_angular_speed:main',
         ],
     },
 )
