@@ -15,13 +15,89 @@ from Rosmaster_Lib import Rosmaster
 CAR_TYPE = 4
 SERIAL_PORT = '/dev/ttyUSB0'
 
-# REVERTED (2026-09-15): dividing commanded speed by a fixed ~3.8 factor (from
-# a single 0.1 m/s ground test) pushed low commands into a motor deadband/
-# stiction zone - the robot then didn't start moving for ~1s, then lurched to
-# roughly the SAME real speed as before the correction. The commanded-vs-actual
-# speed relationship is NOT simple linear scaling - see
-# /memories/repo/rosmaster_motor_controller.md for the full investigation and
-# the plan for a proper multi-speed calibration. No correction applied for now.
+# CUSTOM CLOSED-LOOP SPEED CONTROL (2026-09-15) - replaces set_car_motion().
+# The firmware's own speed PID was found to be fundamentally broken for our
+# motors: any commanded speed from ~0.06 to 2.0 m/s saturates to the SAME
+# fixed real speed, and retuning its gains via set_pid_param() only produced
+# either no motion (weak gain) or violent oscillation (stronger gain) - its
+# encoder-feedback scaling uses wheel/encoder constants hardcoded for
+# Yahboom's own motor, which don't match ours. Full investigation and all
+# calibration data in /memories/repo/rosmaster_motor_controller.md.
+#
+# Raw PWM (set_motor(), which bypasses the firmware's encoder/PID loop
+# entirely) instead gives a smooth, monotonic, stable real-speed response for
+# both linear and angular motion - so we drive the motors with set_motor()
+# and close our own feedforward+PI speed loop here in Python, using
+# get_motion_data() (still computed by the firmware from real encoder counts,
+# just with a roughly constant scale error) as feedback.
+CONTROL_PERIOD = 0.1  # seconds (10 Hz) - matches the rate validated during calibration
+CMD_VEL_TIMEOUT = 0.5  # seconds - stop the motors if no cmd_vel arrives within this
+
+# get_motion_data() overreports real speed by a roughly constant factor,
+# found from repeated real-distance/rotation measurements across a wide
+# speed range (see memory file). Linear and angular have DIFFERENT factors
+# since the firmware computes them from different, separately-wrong
+# hardcoded constants (wheel circumference/pulses-per-rev vs. wheelbase).
+LINEAR_TELEMETRY_CORRECTION = 0.82
+ANGULAR_TELEMETRY_CORRECTION = 0.65
+
+# Feedforward: duty (0-100) needed for a given |target speed|, fitted from
+# real-world calibration runs (tune_motor_pid.py --raw / --raw --spin,
+# 2026-09-15 - see memory file for the raw data points behind this fit).
+LINEAR_FF_SLOPE = 107.2   # duty per m/s
+LINEAR_FF_OFFSET = 18.6   # duty needed to overcome stiction/deadband
+ANGULAR_FF_SLOPE = 25.8   # duty per rad/s
+ANGULAR_FF_OFFSET = 29.9  # duty needed to overcome stiction/deadband
+
+# PI trim gains (correct the feedforward's residual error) - kept modest
+# since this loop runs in plain Python at CONTROL_PERIOD, not in firmware.
+LINEAR_KP = 40.0
+LINEAR_KI = 20.0
+ANGULAR_KP = 15.0
+ANGULAR_KI = 8.0
+
+DUTY_LIMIT = 100.0
+
+
+class SpeedPIController:
+    """Feedforward + PI trim controller for one motion axis (linear or
+    angular), producing a signed duty value in [-DUTY_LIMIT, DUTY_LIMIT].
+
+    The feedforward term does most of the work (it's a fit of duty vs. real
+    measured speed from real hardware tests), the PI term only trims the
+    residual error - this keeps the loop well-behaved without needing large,
+    windup-prone gains.
+    """
+
+    def __init__(self, ff_slope, ff_offset, kp, ki):
+        self.ff_slope = ff_slope
+        self.ff_offset = ff_offset
+        self.kp = kp
+        self.ki = ki
+        self.integral = 0.0
+
+    def reset(self):
+        self.integral = 0.0
+
+    def update(self, target, measured, dt):
+        if target == 0.0:
+            # Don't hold an integral term while stopped - avoids any lurch
+            # the next time a nonzero target is commanded.
+            self.reset()
+            return 0.0
+
+        sign = 1.0 if target > 0 else -1.0
+        feedforward = sign * (self.ff_slope * abs(target) + self.ff_offset)
+
+        error = target - measured
+        proposed_integral = self.integral + error * dt
+        output = feedforward + self.kp * error + self.ki * proposed_integral
+
+        # Anti-windup: only keep the integral update if it doesn't push the
+        # output past the duty limit (clamped conditional integration).
+        if -DUTY_LIMIT <= output <= DUTY_LIMIT:
+            self.integral = proposed_integral
+        return max(-DUTY_LIMIT, min(DUTY_LIMIT, output))
 
 
 class UgvDriver(Node):
@@ -35,6 +111,15 @@ class UgvDriver(Node):
         self._warned_joint_states = False
         self._warned_led_ctrl = False
 
+        # Custom closed-loop speed control state (see constants above).
+        self.target_linear = 0.0
+        self.target_angular = 0.0
+        self.last_cmd_vel_time = time.monotonic()
+        self._last_control_time = time.monotonic()
+        self.linear_ctrl = SpeedPIController(LINEAR_FF_SLOPE, LINEAR_FF_OFFSET, LINEAR_KP, LINEAR_KI)
+        self.angular_ctrl = SpeedPIController(ANGULAR_FF_SLOPE, ANGULAR_FF_OFFSET, ANGULAR_KP, ANGULAR_KI)
+        self.control_timer = self.create_timer(CONTROL_PERIOD, self.control_loop)
+
         # Subscribe to velocity commands (cmd_vel topic)
         self.cmd_vel_sub_ = self.create_subscription(Twist, "cmd_vel", self.cmd_vel_callback, 10)
 
@@ -47,27 +132,58 @@ class UgvDriver(Node):
         # Subscribe to voltage data (voltage topic)
         self.voltage_sub = self.create_subscription(Float32, 'voltage', self.voltage_callback, 10)
 
-    # Callback for processing velocity commands
+    # Callback for processing velocity commands - just records the latest
+    # target; the actual motor control happens in control_loop() below.
     def cmd_vel_callback(self, msg):
         # NOTE: physical direction was found reversed vs. cmd_vel intent on
         # the NEW board too (confirmed empirically 2026-09-11: commanding
         # +0.2 m/s forward drove the robot backward, all 4 wheels attached) -
         # inverted here in software rather than rewiring the motors.
-        linear_velocity = -msg.linear.x
-        angular_velocity = -msg.angular.z
+        self.target_linear = -msg.linear.x
+        self.target_angular = -msg.angular.z
+        self.last_cmd_vel_time = time.monotonic()
 
+    # Runs at CONTROL_PERIOD regardless of cmd_vel message rate: reads real
+    # measured speed from get_motion_data(), runs the two feedforward+PI
+    # loops, mixes them into left/right duty and sends it via set_motor()
+    # (bypasses the firmware's own broken speed PID - see constants above).
+    def control_loop(self):
+        now = time.monotonic()
+        dt = now - self._last_control_time
+        self._last_control_time = now
+        if dt <= 0:
+            return
 
-        # Apply minimum threshold to angular velocity if linear velocity is zero
-        if linear_velocity == 0:
-            if 0 < angular_velocity < 0.2:
-                angular_velocity = 0.2
-            elif -0.2 < angular_velocity < 0:
-                angular_velocity = -0.2
+        if now - self.last_cmd_vel_time > CMD_VEL_TIMEOUT:
+            self.target_linear = 0.0
+            self.target_angular = 0.0
 
-        # set_car_motion takes real m/s / rad/s directly (confirmed from
-        # Yahboom's own reference driver) - no scaling needed. vy is always
-        # 0 since CAR_FOURWHEEL ignores it (pure differential drive).
-        self.car.set_car_motion(linear_velocity, 0.0, angular_velocity)
+        vx, _vy, vz = self.car.get_motion_data()
+        measured_linear = vx * LINEAR_TELEMETRY_CORRECTION
+        measured_angular = vz * ANGULAR_TELEMETRY_CORRECTION
+
+        duty_lin = self.linear_ctrl.update(self.target_linear, measured_linear, dt)
+        duty_ang = self.angular_ctrl.update(self.target_angular, measured_angular, dt)
+
+        # m1=front-left, m2=rear-left, m3=front-right, m4=rear-right (see
+        # app_fourwheel.c's Fourwheel_Ctrl). Forward needs NEGATIVE duty on
+        # all wheels (confirmed empirically); duty_ang is added/subtracted
+        # so that increasing it increases measured_angular, matching a
+        # positive target_angular (self-consistent regardless of which
+        # physical side duty_ang happens to speed up - only the closed-loop
+        # sign matters for stability; flip here if real rotation direction
+        # ends up reversed vs. cmd_vel intent, same as the linear note above).
+        left = -duty_lin + duty_ang
+        right = -duty_lin - duty_ang
+
+        # Scale both sides down together (preserving the turn ratio) if
+        # their sum would exceed the duty limit.
+        max_mag = max(abs(left), abs(right), DUTY_LIMIT)
+        scale = DUTY_LIMIT / max_mag
+        left *= scale
+        right *= scale
+
+        self.car.set_motor(int(round(left)), int(round(left)), int(round(right)), int(round(right)))
 
     # Callback for processing joint state updates
     def joint_states_callback(self, msg):
@@ -102,12 +218,13 @@ class UgvDriver(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = UgvDriver("ugv_driver")
-    
+
     try:
         rclpy.spin(node)  # Keep the node running and handling callbacks
     except KeyboardInterrupt:
         pass  # Graceful shutdown on user interrupt
     finally:
+        node.car.set_motor(0, 0, 0, 0)
         node.destroy_node()
         rclpy.shutdown()
 
