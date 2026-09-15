@@ -21,8 +21,14 @@ Goal is narrowly: find a control path where the REAL speed varies smoothly
 and predictably with the commanded value, so TEB/Nav2 velocity commands
 actually get followed - not a full PID retune exercise.
 
-Run with: python3 tune_motor_pid.py <value> [duration_s] [--kp K --ki K --kd K] [--raw]
+Run with: python3 tune_motor_pid.py <value> [duration_s] [--kp K --ki K --kd K] [--raw] [--spin]
   <value> is m/s for normal mode, or PWM duty [-100,100] for --raw mode.
+  --spin (only with --raw) drives left/right sides in opposite directions to
+  test pure rotation, since the firmware's set_car_motion() angular control
+  is separately known to be ~5x too fast/uncorrected - need to know if raw
+  PWM rotation is smooth/proportional before designing a custom controller.
+  Motor channel order (from app_fourwheel.c's Fourwheel_Ctrl): m1=front-left,
+  m2=rear-left, m3=front-right, m4=rear-right.
 """
 import argparse
 import sys
@@ -55,9 +61,14 @@ def connect():
     sys.exit(1)
 
 
-def profile(bot, start_cmd, stop_cmd, duration):
-    """Run start_cmd(), poll get_motion_data() for duration seconds, then stop_cmd()."""
-    samples = []  # (t, vx)
+def profile(bot, start_cmd, stop_cmd, duration, field='vx'):
+    """Run start_cmd(), poll get_motion_data() for duration seconds, then stop_cmd().
+
+    field selects which of get_motion_data()'s (vx, vy, vz) to track/print.
+    """
+    field_index = {'vx': 0, 'vy': 1, 'vz': 2}[field]
+    unit = 'm/s' if field != 'vz' else 'rad/s'
+    samples = []  # (t, value)
     start = time.monotonic()
     start_cmd()
     try:
@@ -65,9 +76,9 @@ def profile(bot, start_cmd, stop_cmd, duration):
             t = time.monotonic() - start
             if t >= duration:
                 break
-            vx, _vy, _vz = bot.get_motion_data()
-            samples.append((t, vx))
-            print(f"  t={t:5.2f}s  vx={vx:+.3f} m/s")
+            value = bot.get_motion_data()[field_index]
+            samples.append((t, value))
+            print(f"  t={t:5.2f}s  {field}={value:+.3f} {unit}")
             time.sleep(POLL_PERIOD)
     finally:
         stop_cmd()
@@ -78,7 +89,7 @@ def profile(bot, start_cmd, stop_cmd, duration):
 
     tail = samples[len(samples) * 2 // 3:]
     steady_state = sum(abs(v) for _t, v in tail) / len(tail)
-    print(f"Estimated steady-state speed (last third of run): {steady_state:.3f} m/s")
+    print(f"Estimated steady-state {field} (last third of run): {steady_state:.3f} {unit}")
 
 
 def main():
@@ -89,7 +100,12 @@ def main():
     parser.add_argument('--ki', type=float, default=None)
     parser.add_argument('--kd', type=float, default=None)
     parser.add_argument('--raw', action='store_true', help='use set_motor() raw PWM instead of set_car_motion()')
+    parser.add_argument('--spin', action='store_true', help='pure rotation test (left/right differential), requires --raw')
     args = parser.parse_args()
+
+    if args.spin and not args.raw:
+        print("--spin is only implemented for --raw mode.")
+        sys.exit(1)
 
     bot = connect()
 
@@ -101,7 +117,18 @@ def main():
         bot.set_pid_param(args.kp, args.ki, args.kd, forever=False)
         time.sleep(0.2)
 
-    if args.raw:
+    if args.raw and args.spin:
+        duty = args.value
+        input(f"\nWill spin in place at RAW PWM duty {duty} per side (of [-100,100]) for "
+              f"{args.duration}s.\nMark the robot's current heading, clear space around it, "
+              f"then press Enter to start...")
+        # m1/m2=left, m3/m4=right (see Fourwheel_Ctrl) - opposite signs to spin in place.
+        profile(bot,
+                 start_cmd=lambda: bot.set_motor(-duty, -duty, duty, duty),
+                 stop_cmd=lambda: bot.set_motor(0, 0, 0, 0),
+                 duration=args.duration,
+                 field='vz')
+    elif args.raw:
         duty = args.value
         input(f"\nWill drive at RAW PWM duty {duty} (of [-100,100]) for {args.duration}s.\n"
               f"Mark the robot's current position, clear its path, then press Enter to start...")
@@ -120,15 +147,17 @@ def main():
                  stop_cmd=lambda: bot.set_car_motion(0.0, 0.0, 0.0),
                  duration=args.duration)
 
+    prompt = ("\nMeasured REAL rotation, in degrees (or 'skip'): " if (args.raw and args.spin)
+              else "\nMeasured REAL distance travelled, in cm (or 'skip'): ")
     while True:
-        raw = input("\nMeasured REAL distance travelled, in cm (or 'skip'): ").strip()
+        raw = input(prompt).strip()
         if raw.lower() == 'skip':
             return
         try:
             float(raw)
             return
         except ValueError:
-            print("Please enter a number (e.g. 87.5) or 'skip'.")
+            print("Please enter a number (or 'skip').")
 
 
 if __name__ == '__main__':
