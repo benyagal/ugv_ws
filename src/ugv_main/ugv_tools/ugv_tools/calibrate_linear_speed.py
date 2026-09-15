@@ -62,7 +62,9 @@ def connect():
 def run_one_speed(bot, speed):
     input(f"\n--- {speed} m/s for {DURATION}s ---\n"
           f"Mark the robot's current position, clear its path, then press Enter to start...")
-    bot.set_car_motion(speed, 0.0, 0.0)
+    # set_car_motion's raw sign drives backward on our board (same inversion
+    # as ugv_driver.py's cmd_vel_callback) - negate so 'speed' means forward.
+    bot.set_car_motion(-speed, 0.0, 0.0)
     time.sleep(DURATION)
     bot.set_car_motion(0.0, 0.0, 0.0)
     time.sleep(0.3)
