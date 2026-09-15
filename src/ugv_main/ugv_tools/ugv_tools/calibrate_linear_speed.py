@@ -20,8 +20,10 @@ actual_speed = a * commanded_speed + b (simple linear regression) and prints:
 
 Run with: python3 calibrate_linear_speed.py
 Needs open, flat, clear floor space - the longest run needs SPEEDS[-1] * DURATION
-metres of clearance in front of the robot, plus margin. Sized (0.1-0.25 m/s,
-5s) for a ~3.5-4m corridor.
+metres of clearance in front of the robot, plus margin. Sized (0.02-0.1 m/s, 2s)
+to probe the deadband-to-saturation transition found on 2026-09-15 (0.1-0.25
+m/s commands all produced nearly the same ~0.73-0.85 m/s actual speed - the
+motor response looks closer to a step function than a linear scale).
 """
 import sys
 import time
@@ -36,11 +38,12 @@ except ImportError:
 CANDIDATE_PORTS = ['/dev/ttyUSB0', '/dev/myserial', '/dev/ttyACM0', '/dev/ttyTHS1']
 CAR_TYPE = 4
 
-# Realistic operating speeds (m/s) - 0.1 m/s was already confirmed NOT to be
-# in the deadband zone (2026-09-15 ground test), so it's a safe lower bound.
-# Kept low to fit a ~3.5-4m corridor: longest run covers SPEEDS[-1]*DURATION = 1.25m.
-SPEEDS = [0.1, 0.15, 0.2, 0.25]
-DURATION = 4.0  # seconds per run
+# Very low, closely-spaced speeds - 0.1-0.25 m/s all saturated to ~0.73-0.85
+# m/s actual (2026-09-15 test), so this range instead probes the deadband
+# (near-zero) to saturation transition. Short DURATION keeps distance safe
+# even at the known ~0.85 m/s saturated speed.
+SPEEDS = [0.02, 0.04, 0.06, 0.08, 0.1]
+DURATION = 2.0  # seconds per run
 
 
 def connect():
