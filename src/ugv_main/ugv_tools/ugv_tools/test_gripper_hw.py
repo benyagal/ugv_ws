@@ -29,8 +29,17 @@ the same switch in the background and forces the servo back to
 S1_STOP_ANGLE the moment it reads as pressed - use --active-high if
 'switch' shows it resting HIGH and going LOW when pressed is wrong (default
 assumes a pulled-up switch that reads LOW when pressed).
+
+KNOWN ISSUE (found 2026-09-15): Jetson.GPIO ignores setup()'s
+pull_up_down parameter on this carrier board (it prints a UserWarning
+saying so), so SWITCH_PIN has NO defined idle level without an external
+pull resistor wired to it - 'switch' read PRESSED constantly, at rest,
+without the button touched. Until an external pull-up/down resistor is
+added to the wiring, pass --ignore-switch to 's1' to test the servo
+without the (currently unreliable) safety cutoff.
 """
 import argparse
+import subprocess
 import sys
 import time
 
@@ -55,6 +64,23 @@ SWITCH_PIN = 7      # GPIO09 - homing microswitch, should stop S1's OUT motion
 
 S1_STOP_ANGLE = 90  # presumed neutral/stop point for the continuous servo - verify with the 's1' command
 
+# S2 is mounted mirrored relative to S3 (confirmed empirically 2026-09-15:
+# S3's raw angle was correct, S2's was inverted) - flip it here so callers
+# always pass the logical/intended angle for both.
+MIRRORED_SERVO_IDS = (2,)
+
+# On this carrier board, physical pins 29/31 (BOARD numbering) boot up with
+# their pinmux set to input, so GPIO.output() silently has no effect on the
+# actual pin voltage even though it reports success (same issue already
+# found/fixed for ugv_gripper's relay pins - see bringup_gripper.launch.py).
+# Re-applied here since this standalone tool doesn't go through that launch
+# file. Only lasts until next reboot; re-derive via the "sudo busybox
+# devmem ..." command Jetson.GPIO's own warning prints if pins ever change.
+PINMUX_FIXUPS = {
+    29: ['busybox', 'devmem', '0x2430068', 'w', '0x8'],
+    31: ['busybox', 'devmem', '0x2430070', 'w', '0x8'],
+}
+
 
 def connect_rosmaster():
     for port in CANDIDATE_PORTS:
@@ -76,17 +102,20 @@ def switch_pressed(active_low):
     return (level == GPIO.LOW) if active_low else (level == GPIO.HIGH)
 
 
-def cmd_s1(angle, duration, active_low):
+def cmd_s1(angle, duration, active_low, ignore_switch):
     bot = connect_rosmaster()
-    GPIO.setup(SWITCH_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP if active_low else GPIO.PUD_DOWN)
     print(f"Driving S1 to angle={angle} for up to {duration}s (Ctrl+C to stop early)...")
-    print("Watching the microswitch in the background - S1 will be forced to stop if it's pressed.")
+    if ignore_switch:
+        print("--ignore-switch given - NOT watching the microswitch this run.")
+    else:
+        GPIO.setup(SWITCH_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP if active_low else GPIO.PUD_DOWN)
+        print("Watching the microswitch in the background - S1 will be forced to stop if it's pressed.")
     bot.set_pwm_servo(1, angle)
     start = time.monotonic()
     stopped_by_switch = False
     try:
         while time.monotonic() - start < duration:
-            if switch_pressed(active_low):
+            if not ignore_switch and switch_pressed(active_low):
                 print("Microswitch pressed - stopping S1.")
                 stopped_by_switch = True
                 break
@@ -98,13 +127,16 @@ def cmd_s1(angle, duration, active_low):
 
 def cmd_s180(servo_id, angle, duration):
     bot = connect_rosmaster()
-    print(f"Driving S{servo_id} to angle={angle}, holding for {duration}s...")
-    bot.set_pwm_servo(servo_id, angle)
+    physical_angle = 180 - angle if servo_id in MIRRORED_SERVO_IDS else angle
+    print(f"Driving S{servo_id} to logical angle={angle} (physical={physical_angle}), holding for {duration}s...")
+    bot.set_pwm_servo(servo_id, physical_angle)
     time.sleep(duration)
     print("Done (servo holds its last commanded position - send another angle, e.g. 90, to re-center).")
 
 
 def cmd_relay(direction, duration):
+    for fixup_cmd in PINMUX_FIXUPS.values():
+        subprocess.run(fixup_cmd, check=False)
     GPIO.setup(RELAY_OUT_PIN, GPIO.OUT, initial=GPIO.LOW)
     GPIO.setup(RELAY_IN_PIN, GPIO.OUT, initial=GPIO.LOW)
     if direction == 'stop':
@@ -150,6 +182,8 @@ def main():
     p_s1.add_argument('duration', type=float, nargs='?', default=3.0)
     p_s1.add_argument('--active-high', dest='active_low', action='store_false', default=True,
                        help="microswitch reads HIGH when pressed (default assumes LOW-when-pressed, pulled up)")
+    p_s1.add_argument('--ignore-switch', action='store_true',
+                       help="don't watch the microswitch at all (use while its wiring/pull resistor is unconfirmed)")
 
     for name in ('s2', 's3'):
         p = sub.add_parser(name, help=f'drive the 180 degree servo (motor controller channel {name[1]})')
@@ -170,7 +204,7 @@ def main():
     GPIO.setmode(GPIO.BOARD)
     try:
         if args.mode == 's1':
-            cmd_s1(args.angle, args.duration, args.active_low)
+            cmd_s1(args.angle, args.duration, args.active_low, args.ignore_switch)
         elif args.mode in ('s2', 's3'):
             cmd_s180(int(args.mode[1]), args.angle, args.duration)
         elif args.mode == 'relay':
