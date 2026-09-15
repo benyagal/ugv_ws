@@ -47,14 +47,20 @@ ANGULAR_TELEMETRY_CORRECTION = 0.65
 LINEAR_FF_SLOPE = 107.2   # duty per m/s
 LINEAR_FF_OFFSET = 18.6   # duty needed to overcome stiction/deadband
 ANGULAR_FF_SLOPE = 25.8   # duty per rad/s
-ANGULAR_FF_OFFSET = 29.9  # duty needed to overcome stiction/deadband
+# Raised from the raw calibration fit (29.9): real testing (2026-09-15) found
+# one wheel (front-right) needs more duty than the others to break static
+# friction - at 0.3 rad/s target the old offset gave ~37.6 duty, too low for
+# that wheel to start immediately, causing a multi-second ramp-up and
+# undershoot; at 0.6 rad/s (~45 duty) all wheels started at once and tracked
+# ~90% of target. This offset ensures even low targets clear that threshold.
+ANGULAR_FF_OFFSET = 38.0  # duty needed to overcome stiction/deadband
 
 # PI trim gains (correct the feedforward's residual error) - kept modest
 # since this loop runs in plain Python at CONTROL_PERIOD, not in firmware.
 LINEAR_KP = 40.0
 LINEAR_KI = 20.0
 ANGULAR_KP = 15.0
-ANGULAR_KI = 8.0
+ANGULAR_KI = 15.0  # raised from 8.0 to correct residual undershoot faster
 
 DUTY_LIMIT = 100.0
 
