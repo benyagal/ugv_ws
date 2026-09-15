@@ -15,13 +15,13 @@ from Rosmaster_Lib import Rosmaster
 CAR_TYPE = 4
 SERIAL_PORT = '/dev/ttyUSB0'
 
-# Preliminary ground-measured calibration (2026-09-15): commanding 0.1 m/s for
-# 2s actually moved the robot ~75-78cm (~0.38 m/s actual, ~3.8x too fast) -
-# set_car_motion()'s real-world speed doesn't match the requested m/s 1:1 on
-# this hardware. Dividing the commanded linear speed by this factor corrects
-# for it. Only linear speed was measured this way - angular is NOT scaled
-# (only its direction was confirmed correct, not its rate).
-LINEAR_SPEED_CORRECTION_FACTOR = 3.8
+# REVERTED (2026-09-15): dividing commanded speed by a fixed ~3.8 factor (from
+# a single 0.1 m/s ground test) pushed low commands into a motor deadband/
+# stiction zone - the robot then didn't start moving for ~1s, then lurched to
+# roughly the SAME real speed as before the correction. The commanded-vs-actual
+# speed relationship is NOT simple linear scaling - see
+# /memories/repo/rosmaster_motor_controller.md for the full investigation and
+# the plan for a proper multi-speed calibration. No correction applied for now.
 
 
 class UgvDriver(Node):
@@ -53,7 +53,7 @@ class UgvDriver(Node):
         # the NEW board too (confirmed empirically 2026-09-11: commanding
         # +0.2 m/s forward drove the robot backward, all 4 wheels attached) -
         # inverted here in software rather than rewiring the motors.
-        linear_velocity = -msg.linear.x / LINEAR_SPEED_CORRECTION_FACTOR
+        linear_velocity = -msg.linear.x
         angular_velocity = -msg.angular.z
 
 
