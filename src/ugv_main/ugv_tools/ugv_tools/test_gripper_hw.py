@@ -63,7 +63,7 @@ RELAY_IN_PIN = 31   # GPIO11 - energizes the relay driving the linear motor IN
 # make Jetson.GPIO's input reads stale/wrong even though the switch's own
 # voltage (checked with a multimeter) toggles correctly - moved to pin 15,
 # which isn't reserved for any onboard function. Move the physical wiring too.
-SWITCH_PIN = 15
+SWITCH_PIN = 33
 
 S1_STOP_ANGLE = 90  # presumed neutral/stop point for the continuous servo - verify with the 's1' command
 
