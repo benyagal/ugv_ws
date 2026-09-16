@@ -26,17 +26,15 @@ Usage:
 'switch' just polls and prints the raw pin level/edges, to find its resting
 state and confirm wiring before trusting it as a safety cutoff. 's1' polls
 the same switch in the background and forces the servo back to
-S1_STOP_ANGLE the moment it reads as pressed - use --active-high if
-'switch' shows it resting HIGH and going LOW when pressed is wrong (default
-assumes a pulled-up switch that reads LOW when pressed).
+S1_STOP_ANGLE the moment it reads as pressed. Convention (matches
+test_switch_pin.py, validated 2026-09-16): HIGH = pressed ('megvan
+nyomva'), LOW = released ('nincs megnyomva').
 
 KNOWN ISSUE (found 2026-09-15): Jetson.GPIO ignores setup()'s
 pull_up_down parameter on this carrier board (it prints a UserWarning
-saying so), so SWITCH_PIN has NO defined idle level without an external
-pull resistor wired to it - 'switch' read PRESSED constantly, at rest,
-without the button touched. Until an external pull-up/down resistor is
-added to the wiring, pass --ignore-switch to 's1' to test the servo
-without the (currently unreliable) safety cutoff.
+saying so), so SWITCH_PIN needs a working EXTERNAL pull resistor wired to
+it - without one it floats. Pass --ignore-switch to 's1' to test the
+servo without the safety cutoff while the wiring is unconfirmed.
 """
 import argparse
 import subprocess
@@ -102,25 +100,24 @@ def connect_rosmaster():
     sys.exit(1)
 
 
-def switch_pressed(active_low):
-    level = GPIO.input(SWITCH_PIN)
-    return (level == GPIO.LOW) if active_low else (level == GPIO.HIGH)
+def switch_pressed():
+    return GPIO.input(SWITCH_PIN) == GPIO.HIGH
 
 
-def cmd_s1(angle, duration, active_low, ignore_switch):
+def cmd_s1(angle, duration, ignore_switch):
     bot = connect_rosmaster()
     print(f"Driving S1 to angle={angle} for up to {duration}s (Ctrl+C to stop early)...")
     if ignore_switch:
         print("--ignore-switch given - NOT watching the microswitch this run.")
     else:
-        GPIO.setup(SWITCH_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP if active_low else GPIO.PUD_DOWN)
+        GPIO.setup(SWITCH_PIN, GPIO.IN)
         print("Watching the microswitch in the background - S1 will be forced to stop if it's pressed.")
     bot.set_pwm_servo(1, angle)
     start = time.monotonic()
     stopped_by_switch = False
     try:
         while time.monotonic() - start < duration:
-            if not ignore_switch and switch_pressed(active_low):
+            if not ignore_switch and switch_pressed():
                 print("Microswitch pressed - stopping S1.")
                 stopped_by_switch = True
                 break
@@ -165,15 +162,16 @@ def cmd_relay(direction, duration):
         print("Relays de-energized.")
 
 
-def cmd_switch(duration, active_low):
-    GPIO.setup(SWITCH_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP if active_low else GPIO.PUD_DOWN)
+def cmd_switch(duration):
+    GPIO.setup(SWITCH_PIN, GPIO.IN)
     print(f"Polling microswitch on pin {SWITCH_PIN} for {duration}s (press it to test)...")
     start = time.monotonic()
     last = None
     while time.monotonic() - start < duration:
-        pressed = switch_pressed(active_low)
+        pressed = switch_pressed()
         if pressed != last:
-            print(f"  t={time.monotonic() - start:5.2f}s  switch {'PRESSED' if pressed else 'released'}")
+            state = "megvan nyomva" if pressed else "nincs megnyomva"
+            print(f"  t={time.monotonic() - start:5.2f}s  -> {state}")
             last = pressed
         time.sleep(0.02)
 
@@ -185,8 +183,6 @@ def main():
     p_s1 = sub.add_parser('s1', help='drive the 360 degree servo (motor controller channel 1)')
     p_s1.add_argument('angle', type=int, help='0-180 (90 is presumed stop - verify!)')
     p_s1.add_argument('duration', type=float, nargs='?', default=3.0)
-    p_s1.add_argument('--active-high', dest='active_low', action='store_false', default=True,
-                       help="microswitch reads HIGH when pressed (default assumes LOW-when-pressed, pulled up)")
     p_s1.add_argument('--ignore-switch', action='store_true',
                        help="don't watch the microswitch at all (use while its wiring/pull resistor is unconfirmed)")
 
@@ -201,21 +197,19 @@ def main():
 
     p_switch = sub.add_parser('switch', help='poll the homing microswitch and print its state on every edge')
     p_switch.add_argument('duration', type=float, nargs='?', default=10.0)
-    p_switch.add_argument('--active-high', dest='active_low', action='store_false', default=True,
-                           help="assume/report HIGH as pressed instead of the default LOW-when-pressed")
 
     args = parser.parse_args()
 
     GPIO.setmode(GPIO.BOARD)
     try:
         if args.mode == 's1':
-            cmd_s1(args.angle, args.duration, args.active_low, args.ignore_switch)
+            cmd_s1(args.angle, args.duration, args.ignore_switch)
         elif args.mode in ('s2', 's3'):
             cmd_s180(int(args.mode[1]), args.angle, args.duration)
         elif args.mode == 'relay':
             cmd_relay(args.direction, args.duration)
         elif args.mode == 'switch':
-            cmd_switch(args.duration, args.active_low)
+            cmd_switch(args.duration)
     finally:
         GPIO.cleanup()
 
