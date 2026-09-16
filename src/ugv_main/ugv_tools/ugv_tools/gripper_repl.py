@@ -38,7 +38,7 @@ S2_DOWN = 0
 # NOTE: PWM servos themselves do not expose a speed parameter through
 # set_pwm_servo(). This controls the rate at which intermediate angles
 # are commanded.
-S23_STEP_DELAY = 0.03
+S23_STEP_DELAY = 0.01
 
 # Jetson GPIO BOARD numbering
 RELAY_OUT_PIN = 29
