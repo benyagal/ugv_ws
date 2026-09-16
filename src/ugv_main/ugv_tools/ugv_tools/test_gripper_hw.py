@@ -60,7 +60,12 @@ CAR_TYPE = 4
 
 RELAY_OUT_PIN = 29  # GPIO01 - energizes the relay driving the linear motor OUT
 RELAY_IN_PIN = 31   # GPIO11 - energizes the relay driving the linear motor IN
-SWITCH_PIN = 33      # GPIO09 - homing microswitch, should stop S1's OUT motion
+# GPIO12 - pin 33 (GPIO13) was tried first but is the Jetson devkit's
+# reserved FAN PWM pin (often claimed by nvfancontrol), which appears to
+# make Jetson.GPIO's input reads stale/wrong even though the switch's own
+# voltage (checked with a multimeter) toggles correctly - moved to pin 15,
+# which isn't reserved for any onboard function. Move the physical wiring too.
+SWITCH_PIN = 15
 
 S1_STOP_ANGLE = 90  # presumed neutral/stop point for the continuous servo - verify with the 's1' command
 
