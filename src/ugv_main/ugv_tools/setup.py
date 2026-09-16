@@ -38,6 +38,7 @@ setup(
             'profile_motion_response = ugv_tools.profile_motion_response:main',
             'tune_motor_pid = ugv_tools.tune_motor_pid:main',
             'test_gripper_hw = ugv_tools.test_gripper_hw:main',
+            'test_switch_pin = ugv_tools.test_switch_pin:main',
         ],
     },
 )
