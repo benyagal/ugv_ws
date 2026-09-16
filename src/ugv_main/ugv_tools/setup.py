@@ -39,6 +39,7 @@ setup(
             'tune_motor_pid = ugv_tools.tune_motor_pid:main',
             'test_gripper_hw = ugv_tools.test_gripper_hw:main',
             'test_switch_pin = ugv_tools.test_switch_pin:main',
+            'gripper_repl = ugv_tools.gripper_repl:main',
         ],
     },
 )

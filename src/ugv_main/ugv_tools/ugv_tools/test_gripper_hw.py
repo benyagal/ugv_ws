@@ -58,11 +58,13 @@ CAR_TYPE = 4
 
 RELAY_OUT_PIN = 29  # GPIO01 - energizes the relay driving the linear motor OUT
 RELAY_IN_PIN = 31   # GPIO11 - energizes the relay driving the linear motor IN
-# GPIO12 - pin 33 (GPIO13) was tried first but is the Jetson devkit's
-# reserved FAN PWM pin (often claimed by nvfancontrol), which appears to
-# make Jetson.GPIO's input reads stale/wrong even though the switch's own
-# voltage (checked with a multimeter) toggles correctly - moved to pin 15,
-# which isn't reserved for any onboard function. Move the physical wiring too.
+# Confirmed 2026-09-16 (via test_switch_pin.py) that pins 33 AND 15 both
+# show the same fault: reads settle/stick HIGH and never return LOW, even
+# on release - this rules out per-pin PWM contention and points to the
+# switch wiring itself (most likely a missing/ineffective external
+# pull-down - Jetson.GPIO ignores setup()'s pull_up_down here). Fix the
+# wiring (verify continuity to GND, or bypass-test with a jumper) before
+# trusting this as a safety cutoff.
 SWITCH_PIN = 33
 
 S1_STOP_ANGLE = 90  # presumed neutral/stop point for the continuous servo - verify with the 's1' command
