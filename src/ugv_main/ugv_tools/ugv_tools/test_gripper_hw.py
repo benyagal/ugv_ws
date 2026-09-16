@@ -60,7 +60,7 @@ CAR_TYPE = 4
 
 RELAY_OUT_PIN = 29  # GPIO01 - energizes the relay driving the linear motor OUT
 RELAY_IN_PIN = 31   # GPIO11 - energizes the relay driving the linear motor IN
-SWITCH_PIN = 7      # GPIO09 - homing microswitch, should stop S1's OUT motion
+SWITCH_PIN = 33      # GPIO09 - homing microswitch, should stop S1's OUT motion
 
 S1_STOP_ANGLE = 90  # presumed neutral/stop point for the continuous servo - verify with the 's1' command
 
