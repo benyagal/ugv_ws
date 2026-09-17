@@ -111,8 +111,8 @@ controller_server:
       primary_controller: "teb_local_planner::TebLocalPlannerROS"
       angular_dist_threshold: 0.785
       forward_sampling_distance: 0.5
-      rotate_to_heading_angular_vel: 1.8
-      max_angular_accel: 3.2
+      rotate_to_heading_angular_vel: 1.0
+      max_angular_accel: 1.0
       simulate_ahead_time: 1.0
       footprint_model.type: circular
       footprint_model.radius: 0.1
@@ -131,8 +131,8 @@ controller_server:
       visualize_hc_graph: True
       max_vel_x: 0.26
       max_vel_theta: 1.0
-      acc_lim_x: 2.5
-      acc_lim_theta: 3.2
+      acc_lim_x: 0.5
+      acc_lim_theta: 1.0
 
 local_costmap:
   local_costmap:

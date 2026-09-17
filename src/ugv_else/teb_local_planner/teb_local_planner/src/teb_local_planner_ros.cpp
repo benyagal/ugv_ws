@@ -725,7 +725,12 @@ bool TebLocalPlannerROS::transformGlobalPlan(const std::vector<geometry_msgs::ms
 //    plan_pose.header.frame_id, plan_to_global_transform);
 
     //let's get the pose of the robot in the frame of the plan
-    geometry_msgs::msg::PoseStamped robot_pose = tf_->transform(global_pose, plan_pose.header.frame_id);
+    // Tolerance added (was an implicit 0s timeout) - our map->odom TF is only
+    // broadcast at 20Hz by the global EKF, so a zero-tolerance "now" lookup
+    // reliably throws ExtrapolationException whenever the request lands a
+    // few ms ahead of the latest broadcast, which was causing the controller
+    // to repeatedly lose its global plan and trigger Spin recovery.
+    geometry_msgs::msg::PoseStamped robot_pose = tf_->transform(global_pose, plan_pose.header.frame_id, tf2::durationFromSec(0.3));
 
     //we'll discard points on the plan that are outside the local costmap
     double dist_threshold = std::max(costmap.getSizeInCellsX() * costmap.getResolution() / 2.0,
