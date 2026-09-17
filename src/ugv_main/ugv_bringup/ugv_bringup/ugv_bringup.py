@@ -56,6 +56,17 @@ class UgvBringup(Node):
         self.gyro_bias = {"gx": 0.0, "gy": 0.0, "gz": 0.0}
         self.gyro_calibrated = False
         self.GYRO_CALIBRATION_SAMPLES = 5000
+
+        # Yaw-rate scale correction (2026-09-17) - the new board's IMU chip
+        # may use a different raw-to-rad/s conversion than Rosmaster_Lib
+        # assumes (see the MPU9250 vs ICM20948 branches in its __parse_data,
+        # which use different gyro_ratio constants) - a scale mismatch here
+        # accumulates into visible yaw drift over repeated turns even though
+        # the (stationary) bias calibration above is correct. 1.0 = no
+        # correction (unmeasured). Measure the real value with
+        # ugv_tools/calibrate_gyro_yaw.py.
+        GYRO_Z_SCALE_CORRECTION = 1.0
+        self.gyro_z_scale_correction = GYRO_Z_SCALE_CORRECTION
         self.get_logger().info(
             f"Calibrating gyro bias ({self.GYRO_CALIBRATION_SAMPLES} samples) - keep the robot completely stationary..."
         )
@@ -100,7 +111,7 @@ class UgvBringup(Node):
         msg.linear_acceleration.z = az
         msg.angular_velocity.x = gx - self.gyro_bias["gx"]
         msg.angular_velocity.y = gy - self.gyro_bias["gy"]
-        msg.angular_velocity.z = gz - self.gyro_bias["gz"]
+        msg.angular_velocity.z = (gz - self.gyro_bias["gz"]) * self.gyro_z_scale_correction
         self.imu_data_raw_publisher_.publish(msg)
 
     def publish_imu_mag(self):
