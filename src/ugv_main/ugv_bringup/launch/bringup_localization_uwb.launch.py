@@ -54,7 +54,11 @@ def generate_launch_description():
 
     uwb_serial_port_arg = DeclareLaunchArgument(
         'uwb_serial_port',
-        default_value='/dev/ttyACM0',
+        # Stable by-id path (confirmed 2026-09-17: the DWM1001-dev board's
+        # onboard SEGGER J-Link VCOM) instead of /dev/ttyACM0 - the ACM index
+        # depends on USB enumeration order and has flipped with other
+        # attached serial devices (e.g. a CH340 adapter) before.
+        default_value='/dev/serial/by-id/usb-SEGGER_J-Link_000760218499-if00',
         description='Serial port for the DWM1001C tag device'
     )
 
