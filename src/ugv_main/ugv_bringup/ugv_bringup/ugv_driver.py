@@ -145,8 +145,10 @@ class UgvDriver(Node):
         # reversed vs. cmd_vel intent, confirmed empirically 2026-09-11 - the
         # inversion is applied once, in control_loop()'s left/right mixing,
         # NOT here too - doing it in both places would cancel out).
+        # target_angular sign flip REMOVED (2026-09-17) - it was inverting
+        # left/right turns vs. cmd_vel intent (confirmed via teleop testing).
         self.target_linear = msg.linear.x
-        self.target_angular = -msg.angular.z
+        self.target_angular = msg.angular.z
         self.last_cmd_vel_time = time.monotonic()
 
     # Runs at CONTROL_PERIOD regardless of cmd_vel message rate: reads real
