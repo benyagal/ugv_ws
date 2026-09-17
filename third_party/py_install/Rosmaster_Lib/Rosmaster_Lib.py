@@ -257,29 +257,58 @@ class Rosmaster(object):
         # 清空缓冲区
         self.ser.flushInput()
         while True:
-            head1 = bytearray(self.ser.read())[0]
-            if head1 == self.__HEAD:
-                head2 = bytearray(self.ser.read())[0]
-                check_sum = 0
-                rx_check_num = 0
-                if head2 == self.__DEVICE_ID - 1:
-                    ext_len = bytearray(self.ser.read())[0]
-                    ext_type = bytearray(self.ser.read())[0]
-                    ext_data = []
-                    check_sum = ext_len + ext_type
-                    data_len = ext_len - 2
-                    while len(ext_data) < data_len:
-                        value = bytearray(self.ser.read())[0]
-                        ext_data.append(value)
-                        if len(ext_data) == data_len:
-                            rx_check_num = value
+            try:
+                head1 = bytearray(self.ser.read())[0]
+                if head1 == self.__HEAD:
+                    head2 = bytearray(self.ser.read())[0]
+                    check_sum = 0
+                    rx_check_num = 0
+                    if head2 == self.__DEVICE_ID - 1:
+                        ext_len = bytearray(self.ser.read())[0]
+                        ext_type = bytearray(self.ser.read())[0]
+                        ext_data = []
+                        check_sum = ext_len + ext_type
+                        data_len = ext_len - 2
+                        while len(ext_data) < data_len:
+                            value = bytearray(self.ser.read())[0]
+                            ext_data.append(value)
+                            if len(ext_data) == data_len:
+                                rx_check_num = value
+                            else:
+                                check_sum = check_sum + value
+                        if check_sum % 256 == rx_check_num:
+                            self.__parse_data(ext_type, ext_data)
                         else:
-                            check_sum = check_sum + value
-                    if check_sum % 256 == rx_check_num:
-                        self.__parse_data(ext_type, ext_data)
-                    else:
-                        if self.__debug:
-                            print("check sum error:", ext_len, ext_type, ext_data)
+                            if self.__debug:
+                                print("check sum error:", ext_len, ext_type, ext_data)
+            except IndexError:
+                # bytearray(self.ser.read())[0] on a 0-byte (timeout) read -
+                # transient, just retry the next byte.
+                continue
+            except Exception as e:
+                # This used to be unhandled, silently killing this daemon
+                # thread on any transient serial hiccup (e.g. "device
+                # reports readiness to read but returned no data") -
+                # freezing IMU/encoder/battery data forever from that point
+                # on (confirmed 2026-09-17: a frozen, zeroed acceleration
+                # vector can't be normalized by the complementary filter,
+                # producing NaN orientation that then poisons the EKFs).
+                # Reopen the port and keep going instead of dying.
+                print(f"[Rosmaster_Lib] receive thread error: {e!r} - reopening port and retrying...")
+                try:
+                    self.ser.close()
+                except Exception:
+                    pass
+                while True:
+                    time.sleep(0.5)
+                    try:
+                        self.ser.open()
+                        self.ser.flushInput()
+                        print("[Rosmaster_Lib] receive thread: port reopened, resuming.")
+                        break
+                    except Exception:
+                        continue
+
 
     # 请求数据， function：对应要返回数据的功能字，parm：传入的参数。
     # Request data, function: corresponding function word to return data, parm: parameter passed in
