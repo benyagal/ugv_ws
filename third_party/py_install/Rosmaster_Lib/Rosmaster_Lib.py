@@ -82,6 +82,10 @@ class Rosmaster(object):
         self.__vx = 0.0
         self.__vy = 0.0
         self.__vz = 0.0
+        # One-time diagnostic (2026-09-17): logs which IMU chip branch
+        # __parse_data actually uses, to confirm/rule out a wrong-chip
+        # scale-constant mismatch as a yaw-drift cause.
+        self.__imu_chip_logged = False
 
         self.__yaw = 0.0
         self.__roll = 0.0
@@ -148,6 +152,9 @@ class Rosmaster(object):
         # 解析MPU9250原始陀螺仪、加速度计、磁力计数据
         # (MPU9250)the original gyroscope, accelerometer, magnetometer data
         elif ext_type == self.FUNC_REPORT_MPU_RAW:
+            if not self.__imu_chip_logged:
+                print("[Rosmaster_Lib] IMU chip branch: MPU9250 (FUNC_REPORT_MPU_RAW)")
+                self.__imu_chip_logged = True
             # 陀螺仪传感器:±500dps=±500°/s ±32768 (gyro/32768*500)*PI/180(rad/s)=gyro/3754.9(rad/s)
             gyro_ratio = 1 / 3754.9 # ±500dps
             self.__gx = struct.unpack('h', bytearray(ext_data[0:2]))[0]*gyro_ratio
@@ -166,6 +173,9 @@ class Rosmaster(object):
         # 解析ICM20948原始陀螺仪、加速度计、磁力计数据
         # (ICM20948)the original gyroscope, accelerometer, magnetometer data
         elif ext_type == self.FUNC_REPORT_ICM_RAW:
+            if not self.__imu_chip_logged:
+                print("[Rosmaster_Lib] IMU chip branch: ICM20948 (FUNC_REPORT_ICM_RAW)")
+                self.__imu_chip_logged = True
             gyro_ratio = 1 / 1000.0
             self.__gx = struct.unpack('h', bytearray(ext_data[0:2]))[0]*gyro_ratio
             self.__gy = struct.unpack('h', bytearray(ext_data[2:4]))[0]*gyro_ratio

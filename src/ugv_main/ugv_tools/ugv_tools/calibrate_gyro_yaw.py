@@ -44,7 +44,7 @@ GYRO_POLL_PERIOD = 0.02  # seconds between gz samples while integrating
 
 # Same rationale as ugv_bringup.py's own calibration - average out gz noise
 # while stationary before spinning, so that noise doesn't bias the integral.
-BIAS_SAMPLES = 200
+BIAS_SAMPLES = 2000
 
 
 def connect():
