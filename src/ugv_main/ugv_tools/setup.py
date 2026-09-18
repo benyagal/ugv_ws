@@ -41,6 +41,7 @@ setup(
             'test_gripper_hw = ugv_tools.test_gripper_hw:main',
             'test_switch_pin = ugv_tools.test_switch_pin:main',
             'gripper_repl = ugv_tools.gripper_repl:main',
+            'diagnose_yaw_pipeline = ugv_tools.diagnose_yaw_pipeline:main',
         ],
     },
 )
