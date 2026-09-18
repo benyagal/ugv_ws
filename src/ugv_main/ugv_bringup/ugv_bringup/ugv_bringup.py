@@ -62,10 +62,10 @@ class UgvBringup(Node):
         # assumes (see the MPU9250 vs ICM20948 branches in its __parse_data,
         # which use different gyro_ratio constants) - a scale mismatch here
         # accumulates into visible yaw drift over repeated turns even though
-        # the (stationary) bias calibration above is correct. 1.0 = no
-        # correction (unmeasured). Measure the real value with
-        # ugv_tools/calibrate_gyro_yaw.py.
-        GYRO_Z_SCALE_CORRECTION = 1.0
+        # the (stationary) bias calibration above is correct. Measured
+        # 2026-09-18 via ugv_tools/calibrate_gyro_yaw.py (weighted fit across
+        # 4 runs of ~115-516 deg, ratio range 1.011-1.036).
+        GYRO_Z_SCALE_CORRECTION = 1.015
         self.gyro_z_scale_correction = GYRO_Z_SCALE_CORRECTION
         self.get_logger().info(
             f"Calibrating gyro bias ({self.GYRO_CALIBRATION_SAMPLES} samples) - keep the robot completely stationary..."
