@@ -18,15 +18,16 @@ CAR_TYPE = 4
 # TODO: add a udev rule (see ldlidar.rules for the pattern) for a stable symlink.
 SERIAL_PORT = '/dev/ttyUSB0'
 
-# Rough placeholder wheel-distance-per-encoder-pulse scale, from Yahboom's OWN
-# 330RPM motor spec (app_motion.h: DISTANCE_CIRCLE=0.204203m / ENCODER_CIRCLE_330
-# =1320 pulses/rev) - deliberately left UNCALIBRATED for our actual motors,
-# since wheel odometry is currently fully disabled in ekf_local.yaml's
-# odom0_config (not fused into localization at all). Only revisit/calibrate
-# this if that gets re-enabled later.
+# Wheel-distance-per-encoder-pulse scale. The nominal numbers come from
+# Yahboom's OWN 330RPM motor spec (app_motion.h: DISTANCE_CIRCLE=0.204203m /
+# ENCODER_CIRCLE_330=1320 pulses/rev), which do not match our motors: the
+# firmware's get_motion_data() speed, computed from these same constants, was
+# measured to overreport real speed by 1/0.82 (see LINEAR_TELEMETRY_CORRECTION
+# in ugv_driver.py), so the pulse scale carries the same error.
 WHEEL_CIRCUMFERENCE_M = 0.204203
 ENCODER_PULSES_PER_REV = 1320.0
-METERS_PER_PULSE = WHEEL_CIRCUMFERENCE_M / ENCODER_PULSES_PER_REV
+ENCODER_SCALE_CORRECTION = 0.82
+METERS_PER_PULSE = WHEEL_CIRCUMFERENCE_M / ENCODER_PULSES_PER_REV * ENCODER_SCALE_CORRECTION
 
 
 class UgvBringup(Node):

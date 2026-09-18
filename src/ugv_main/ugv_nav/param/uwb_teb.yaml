@@ -102,7 +102,9 @@ controller_server:
     progress_checker:
       plugin: "nav2_controller::SimpleProgressChecker"
       required_movement_radius: 0.5
-      movement_time_allowance: 10.0
+      # Raised with the lowered speeds below - 0.5m at 0.15 m/s plus an
+      # in-place rotation no longer fits comfortably in 10s.
+      movement_time_allowance: 15.0
     general_goal_checker:
       stateful: True
       plugin: "nav2_controller::SimpleGoalChecker"
@@ -116,8 +118,8 @@ controller_server:
       primary_controller: "teb_local_planner::TebLocalPlannerROS"
       angular_dist_threshold: 0.785
       forward_sampling_distance: 0.5
-      rotate_to_heading_angular_vel: 1.0
-      max_angular_accel: 1.0
+      rotate_to_heading_angular_vel: 0.5
+      max_angular_accel: 0.5
       simulate_ahead_time: 1.0
       footprint_model.type: circular
       footprint_model.radius: 0.1
@@ -140,10 +142,14 @@ controller_server:
       max_samples: 20
       max_global_plan_lookahead_dist: 1.0
       visualize_hc_graph: False
-      max_vel_x: 0.26
-      max_vel_theta: 1.0
-      acc_lim_x: 0.5
-      acc_lim_theta: 1.0
+      # Lowered 2026-09-18: with only UWB (~10-20cm residual) for position and
+      # no live obstacle sensor, there is nothing to gain from driving fast,
+      # and the higher limits produced visibly overshooting/weaving motion.
+      max_vel_x: 0.15
+      max_vel_x_backwards: 0.1
+      max_vel_theta: 0.5
+      acc_lim_x: 0.3
+      acc_lim_theta: 0.5
 
 local_costmap:
   local_costmap:
@@ -229,9 +235,12 @@ behavior_server:
     robot_base_frame: base_footprint
     transform_tolerance: 0.1
     simulate_ahead_time: 2.0
-    max_rotational_vel: 1.0
-    min_rotational_vel: 0.4
-    rotational_acc_lim: 3.2
+    # Recovery behaviours (Spin/BackUp) bypass the controller's own limits,
+    # so they need matching reductions or they stay the most violent motion
+    # the robot ever makes.
+    max_rotational_vel: 0.5
+    min_rotational_vel: 0.2
+    rotational_acc_lim: 1.0
 
 waypoint_follower:
   ros__parameters:
@@ -250,10 +259,14 @@ velocity_smoother:
     smoothing_frequency: 20.0
     scale_velocities: False
     feedback: "OPEN_LOOP"
-    max_velocity: [0.26, 0.0, 1.0]
-    min_velocity: [-0.26, 0.0, -1.0]
-    max_accel: [2.5, 0.0, 3.2]
-    max_decel: [-2.5, 0.0, -3.2]
+    # This is the last stage before /cmd_vel reaches the motors, so it is the
+    # only place that also caps recovery behaviours and any manual publisher.
+    # The old accel limits (2.5 / 3.2) were far above the planner's own and
+    # therefore smoothed nothing at all.
+    max_velocity: [0.15, 0.0, 0.5]
+    min_velocity: [-0.1, 0.0, -0.5]
+    max_accel: [0.3, 0.0, 0.5]
+    max_decel: [-0.5, 0.0, -1.0]
     odom_topic: "/odometry/local"
     odom_duration: 0.1
     deadband_velocity: [0.0, 0.0, 0.0]

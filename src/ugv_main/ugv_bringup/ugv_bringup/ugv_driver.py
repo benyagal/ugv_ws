@@ -47,13 +47,20 @@ ANGULAR_TELEMETRY_CORRECTION = 0.65
 LINEAR_FF_SLOPE = 107.2   # duty per m/s
 LINEAR_FF_OFFSET = 18.6   # duty needed to overcome stiction/deadband
 ANGULAR_FF_SLOPE = 25.8   # duty per rad/s
-# Raised from the raw calibration fit (29.9): real testing (2026-09-15) found
-# one wheel (front-right) needs more duty than the others to break static
-# friction - at 0.3 rad/s target the old offset gave ~37.6 duty, too low for
-# that wheel to start immediately, causing a multi-second ramp-up and
-# undershoot; at 0.6 rad/s (~45 duty) all wheels started at once and tracked
-# ~90% of target. This offset ensures even low targets clear that threshold.
-ANGULAR_FF_OFFSET = 38.0  # duty needed to overcome stiction/deadband
+ANGULAR_FF_OFFSET = 29.9  # duty needed to overcome stiction/deadband
+
+# Extra duty applied ONLY while an axis is still stalled. The front-right
+# wheel needs ~40-45 duty to break static friction (2026-09-15 test), more
+# than the fitted offset alone gives at low targets. This used to be folded
+# into ANGULAR_FF_OFFSET (raised 29.9 -> 38.0), but that is a PERMANENT +8.1
+# duty (~+0.31 rad/s real) bias on every nonzero angular command: the PI trim
+# needs ~2s of uninterrupted error to integrate it away, so long calibration
+# spins looked fine while short commands (Nav2 heading corrections, teleop
+# taps) over-rotated by ~0.3 rad/s every single time. Applying it as a kick
+# that disappears as soon as the axis actually moves keeps the stiction fix
+# without the steady-state bias.
+ANGULAR_BREAKAWAY_BOOST = 8.1    # duty
+ANGULAR_BREAKAWAY_SPEED = 0.05   # rad/s - below this the axis counts as stalled
 
 # PI trim gains (correct the feedforward's residual error) - kept modest
 # since this loop runs in plain Python at CONTROL_PERIOD, not in firmware.
@@ -75,11 +82,13 @@ class SpeedPIController:
     windup-prone gains.
     """
 
-    def __init__(self, ff_slope, ff_offset, kp, ki):
+    def __init__(self, ff_slope, ff_offset, kp, ki, breakaway_boost=0.0, breakaway_speed=0.0):
         self.ff_slope = ff_slope
         self.ff_offset = ff_offset
         self.kp = kp
         self.ki = ki
+        self.breakaway_boost = breakaway_boost
+        self.breakaway_speed = breakaway_speed
         self.integral = 0.0
 
     def reset(self):
@@ -94,6 +103,8 @@ class SpeedPIController:
 
         sign = 1.0 if target > 0 else -1.0
         feedforward = sign * (self.ff_slope * abs(target) + self.ff_offset)
+        if abs(measured) < self.breakaway_speed:
+            feedforward += sign * self.breakaway_boost
 
         error = target - measured
         proposed_integral = self.integral + error * dt
@@ -123,7 +134,11 @@ class UgvDriver(Node):
         self.last_cmd_vel_time = time.monotonic()
         self._last_control_time = time.monotonic()
         self.linear_ctrl = SpeedPIController(LINEAR_FF_SLOPE, LINEAR_FF_OFFSET, LINEAR_KP, LINEAR_KI)
-        self.angular_ctrl = SpeedPIController(ANGULAR_FF_SLOPE, ANGULAR_FF_OFFSET, ANGULAR_KP, ANGULAR_KI)
+        self.angular_ctrl = SpeedPIController(
+            ANGULAR_FF_SLOPE, ANGULAR_FF_OFFSET, ANGULAR_KP, ANGULAR_KI,
+            breakaway_boost=ANGULAR_BREAKAWAY_BOOST,
+            breakaway_speed=ANGULAR_BREAKAWAY_SPEED,
+        )
         self.control_timer = self.create_timer(CONTROL_PERIOD, self.control_loop)
 
         # Subscribe to velocity commands (cmd_vel topic)
