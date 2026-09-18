@@ -729,8 +729,11 @@ bool TebLocalPlannerROS::transformGlobalPlan(const std::vector<geometry_msgs::ms
     // broadcast at 20Hz by the global EKF, so a zero-tolerance "now" lookup
     // reliably throws ExtrapolationException whenever the request lands a
     // few ms ahead of the latest broadcast, which was causing the controller
-    // to repeatedly lose its global plan and trigger Spin recovery.
-    geometry_msgs::msg::PoseStamped robot_pose = tf_->transform(global_pose, plan_pose.header.frame_id, tf2::durationFromSec(0.3));
+    // to repeatedly lose its global plan and trigger Spin recovery. Kept
+    // small (0.1s, not e.g. 0.3s) since this call BLOCKS the control loop's
+    // own thread for up to the full timeout whenever TF briefly lags - a
+    // larger value would itself cause "missed rate" cycles.
+    geometry_msgs::msg::PoseStamped robot_pose = tf_->transform(global_pose, plan_pose.header.frame_id, tf2::durationFromSec(0.1));
 
     //we'll discard points on the plan that are outside the local costmap
     double dist_threshold = std::max(costmap.getSizeInCellsX() * costmap.getResolution() / 2.0,
