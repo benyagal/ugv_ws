@@ -26,8 +26,13 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Imu
 from nav_msgs.msg import Odometry
+from geometry_msgs.msg import Twist
 
 PRINT_PERIOD = 1.0  # seconds
+
+# Below this |angular.z| a cmd_vel counts as "commanded stopped" for the
+# moving/idle split of the raw gyro integral.
+CMD_STOPPED_EPS = 1e-3
 
 
 def yaw_from_quaternion(q):
@@ -52,6 +57,15 @@ class YawPipelineProbe(Node):
         self._raw_integrated = 0.0
         self._raw_last_stamp = None
 
+        # Split of _raw_integrated by what cmd_vel was commanding at the
+        # time: yaw accumulated while commanded to rotate vs. while commanded
+        # to hold still. A large "idle" share means the extra rotation is
+        # either real coast-down after set_motor(0) (which freewheels rather
+        # than brakes) or spurious gyro output at rest - not a scale error.
+        self._raw_moving = 0.0
+        self._raw_idle = 0.0
+        self._cmd_rotating = False
+
         # Each source's yaw comes from a quaternion, bounded to (-180,180] -
         # accumulate the shortest-path delta between consecutive samples so
         # multi-turn (>180 deg) rotations don't show a false jump/wrap.
@@ -63,6 +77,7 @@ class YawPipelineProbe(Node):
         self.create_subscription(Imu, 'imu/data', self._on_imu_data, 20)
         self.create_subscription(Odometry, 'odometry/local', self._on_ekf_local, 20)
         self.create_subscription(Odometry, 'odometry/global', self._on_ekf_global, 20)
+        self.create_subscription(Twist, 'cmd_vel', self._on_cmd_vel, 20)
 
         self.create_timer(PRINT_PERIOD, self._print_status)
         self.get_logger().info(
@@ -70,12 +85,20 @@ class YawPipelineProbe(Node):
             "mark a heading, rotate a known amount, compare the printed deltas."
         )
 
+    def _on_cmd_vel(self, msg):
+        self._cmd_rotating = abs(msg.angular.z) > CMD_STOPPED_EPS
+
     def _on_imu_raw(self, msg):
         stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
         if self._raw_last_stamp is not None:
             dt = stamp - self._raw_last_stamp
             if 0.0 < dt < 1.0:
-                self._raw_integrated += msg.angular_velocity.z * dt
+                step = msg.angular_velocity.z * dt
+                self._raw_integrated += step
+                if self._cmd_rotating:
+                    self._raw_moving += step
+                else:
+                    self._raw_idle += step
         self._raw_last_stamp = stamp
         self._latest['raw_integrated'] = self._raw_integrated
 
@@ -105,7 +128,9 @@ class YawPipelineProbe(Node):
             f"raw_integrated={deg(self._latest['raw_integrated'])}  "
             f"imu_data={deg(self._latest['imu_data'])}  "
             f"ekf_local={deg(self._latest['ekf_local'])}  "
-            f"ekf_global={deg(self._latest['ekf_global'])}  (deg since node start)"
+            f"ekf_global={deg(self._latest['ekf_global'])}  "
+            f"[raw split: cmd_moving={deg(self._raw_moving)} cmd_idle={deg(self._raw_idle)}]  "
+            f"(deg since node start)"
         )
 
 
