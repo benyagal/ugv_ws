@@ -32,6 +32,9 @@ SERIAL_PORT = '/dev/ttyUSB0'
 # just with a roughly constant scale error) as feedback.
 CONTROL_PERIOD = 0.1  # seconds (10 Hz) - matches the rate validated during calibration
 CMD_VEL_TIMEOUT = 0.5  # seconds - stop the motors if no cmd_vel arrives within this
+# Stop the motors if ugv_bringup stops publishing motion_raw: without feedback
+# the PI loops would wind up against a permanent "measured = 0" error.
+MOTION_FEEDBACK_TIMEOUT = 0.5  # seconds
 
 # get_motion_data() overreports real speed by a roughly constant factor,
 # found from repeated real-distance/rotation measurements across a wide
@@ -121,7 +124,12 @@ class UgvDriver(Node):
     def __init__(self, name):
         super().__init__(name)
         self.car = Rosmaster(car_type=CAR_TYPE, com=SERIAL_PORT)
-        self.car.create_receive_threading()
+        # Deliberately NO create_receive_threading() here: this node is
+        # write-only on the serial port. Rosmaster_Lib's receive thread reads
+        # the tty one byte at a time, so running one here as well as in
+        # ugv_bringup would split every incoming frame randomly between the
+        # two processes and leave both with mostly checksum-failed packets.
+        # Speed feedback comes from ugv_bringup's motion_raw topic instead.
 
         # Only log the "not implemented" servo/LED warnings once each,
         # instead of spamming on every message.
@@ -131,7 +139,10 @@ class UgvDriver(Node):
         # Custom closed-loop speed control state (see constants above).
         self.target_linear = 0.0
         self.target_angular = 0.0
+        self.measured_linear = 0.0
+        self.measured_angular = 0.0
         self.last_cmd_vel_time = time.monotonic()
+        self.last_motion_time = time.monotonic()
         self._last_control_time = time.monotonic()
         self.linear_ctrl = SpeedPIController(LINEAR_FF_SLOPE, LINEAR_FF_OFFSET, LINEAR_KP, LINEAR_KI)
         self.angular_ctrl = SpeedPIController(
@@ -143,6 +154,9 @@ class UgvDriver(Node):
 
         # Subscribe to velocity commands (cmd_vel topic)
         self.cmd_vel_sub_ = self.create_subscription(Twist, "cmd_vel", self.cmd_vel_callback, 10)
+
+        # Board speed telemetry, republished by ugv_bringup (sole serial reader)
+        self.motion_sub_ = self.create_subscription(Twist, "motion_raw", self.motion_raw_callback, 10)
 
         # Subscribe to joint states (ugv/joint_states topic)
         self.joint_states_sub = self.create_subscription(JointState, 'ugv/joint_states', self.joint_states_callback, 10)
@@ -166,6 +180,11 @@ class UgvDriver(Node):
         self.target_angular = msg.angular.z
         self.last_cmd_vel_time = time.monotonic()
 
+    def motion_raw_callback(self, msg):
+        self.measured_linear = msg.linear.x * LINEAR_TELEMETRY_CORRECTION
+        self.measured_angular = msg.angular.z * ANGULAR_TELEMETRY_CORRECTION
+        self.last_motion_time = time.monotonic()
+
     # Runs at CONTROL_PERIOD regardless of cmd_vel message rate: reads real
     # measured speed from get_motion_data(), runs the two feedforward+PI
     # loops, mixes them into left/right duty and sends it via set_motor()
@@ -181,12 +200,14 @@ class UgvDriver(Node):
             self.target_linear = 0.0
             self.target_angular = 0.0
 
-        vx, _vy, vz = self.car.get_motion_data()
-        measured_linear = vx * LINEAR_TELEMETRY_CORRECTION
-        measured_angular = vz * ANGULAR_TELEMETRY_CORRECTION
+        if now - self.last_motion_time > MOTION_FEEDBACK_TIMEOUT:
+            self.linear_ctrl.reset()
+            self.angular_ctrl.reset()
+            self.car.set_motor(0, 0, 0, 0)
+            return
 
-        duty_lin = self.linear_ctrl.update(self.target_linear, measured_linear, dt)
-        duty_ang = self.angular_ctrl.update(self.target_angular, measured_angular, dt)
+        duty_lin = self.linear_ctrl.update(self.target_linear, self.measured_linear, dt)
+        duty_ang = self.angular_ctrl.update(self.target_angular, self.measured_angular, dt)
 
         # m1=front-left, m2=rear-left, m3=front-right, m4=rear-right (see
         # app_fourwheel.c's Fourwheel_Ctrl). Forward needs NEGATIVE duty on

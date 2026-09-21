@@ -2,6 +2,7 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Header, Float32MultiArray, Float32
 from sensor_msgs.msg import Imu, MagneticField
+from geometry_msgs.msg import Twist
 
 from Rosmaster_Lib import Rosmaster
 
@@ -10,6 +11,13 @@ from Rosmaster_Lib import Rosmaster
 # source (app_motion.h) as the plain differential/skid-steer kinematics that
 # matches our robot's wheelbase-based drive - NOT mecanum(1) or Ackermann(5).
 # See /memories/repo/rosmaster_motor_controller.md for the full investigation.
+#
+# THIS NODE IS THE ONLY PROCESS ALLOWED TO READ THE BOARD'S SERIAL PORT.
+# Rosmaster_Lib's receive thread reads /dev/ttyUSB0 one byte at a time; a
+# second process doing the same steals a random half of every frame from
+# this one, so both end up with mostly checksum-failed, silently dropped
+# packets. ugv_driver.py therefore opens the port write-only and gets its
+# closed-loop feedback from the motion_raw topic published below.
 CAR_TYPE = 4
 
 # Confirmed via `ls -l /dev/ttyUSB*` on the Jetson (2026-09-11) - the board has
@@ -36,6 +44,7 @@ class UgvBringup(Node):
         self.imu_data_raw_publisher_ = self.create_publisher(Imu, "imu/data_raw", 100)
         self.imu_mag_publisher_ = self.create_publisher(MagneticField, "imu/mag", 100)
         self.odom_publisher_ = self.create_publisher(Float32MultiArray, "odom/odom_raw", 100)
+        self.motion_publisher_ = self.create_publisher(Twist, "motion_raw", 50)
         self.voltage_publisher_ = self.create_publisher(Float32, "voltage", 50)
 
         self.car = Rosmaster(car_type=CAR_TYPE, com=SERIAL_PORT)
@@ -80,6 +89,7 @@ class UgvBringup(Node):
         self.publish_imu_data_raw()
         self.publish_imu_mag()
         self.publish_odom_raw()
+        self.publish_motion_raw()
         self.publish_voltage()
 
     def publish_imu_data_raw(self):
@@ -136,11 +146,20 @@ class UgvBringup(Node):
         msg = Float32MultiArray(data=[self._left_m, self._right_m])
         self.odom_publisher_.publish(msg)
 
+    def publish_motion_raw(self):
+        # Uncorrected firmware speed telemetry - ugv_driver applies its own
+        # LINEAR/ANGULAR_TELEMETRY_CORRECTION factors to these.
+        vx, vy, vz = self.car.get_motion_data()
+        msg = Twist()
+        msg.linear.x = float(vx)
+        msg.linear.y = float(vy)
+        msg.angular.z = float(vz)
+        self.motion_publisher_.publish(msg)
+
     def publish_voltage(self):
         msg = Float32()
         msg.data = self.car.get_battery_voltage()
         self.voltage_publisher_.publish(msg)
-
 
 def main(args=None):
     rclpy.init(args=args)
