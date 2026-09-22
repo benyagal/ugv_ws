@@ -37,6 +37,10 @@ CMD_VEL_TIMEOUT = 0.5  # seconds - stop the motors if no cmd_vel arrives within 
 # frozen error, but cutting the motors dead would also make a transient
 # publisher stall on the Jetson look like an emergency stop mid-drive.
 MOTION_FEEDBACK_TIMEOUT = 0.5  # seconds
+# Same idea, for the per-side wheel speed used by REVERSE_BREAKAWAY_BOOST
+# below - published on the same 0.04s timer as motion_raw, so this should
+# normally never trip while ugv_bringup is alive.
+ODOM_FEEDBACK_TIMEOUT = 0.5  # seconds
 
 # get_motion_data() overreports real speed by a roughly constant factor,
 # found from repeated real-distance/rotation measurements across a wide
@@ -73,10 +77,17 @@ ANGULAR_BREAKAWAY_SPEED = 0.05   # rad/s - below this the axis counts as stalled
 # forward. ANGULAR_BREAKAWAY_BOOST above doesn't cover this: it's gated on
 # the combined measured_angular, which already reads as "moving" once the
 # forward side alone starts spinning and pivots the chassis around the
-# still-stalled reverse side. This is applied per wheel side AFTER mixing,
-# keyed on that side's own commanded duty magnitude instead.
-REVERSE_BREAKAWAY_BOOST = 10.0   # extra duty for a stalled backward-commanded side
-REVERSE_BREAKAWAY_DUTY = 55.0    # duty below which a backward-commanded side is assumed still stalled
+# still-stalled reverse side.
+#
+# First attempt keyed this off each side's own COMMANDED duty magnitude
+# (boost while duty < 55), but at the turn speeds this robot actually uses
+# the commanded duty is already ~50-57 from the feedforward alone - always
+# past the threshold, so that version never fired. Replaced with genuine
+# per-side feedback: ugv_bringup's odom_raw carries real per-wheel-side
+# distance, differentiated here into real per-side speed, so the stalled
+# side can be detected directly instead of guessed from duty.
+PER_SIDE_REVERSE_BREAKAWAY_BOOST = 20.0  # extra duty for a stalled backward-commanded side
+PER_SIDE_BREAKAWAY_SPEED = 0.02          # m/s - below this a side counts as stalled
 
 # PI trim gains (correct the feedforward's residual error) - kept modest
 # since this loop runs in plain Python at CONTROL_PERIOD, not in firmware.
@@ -173,6 +184,15 @@ class UgvDriver(Node):
         self.last_cmd_vel_time = time.monotonic()
         self.last_motion_time = time.monotonic()
         self._last_control_time = time.monotonic()
+
+        # Per-side real wheel speed (m/s), differentiated from odom_raw's
+        # cumulative distance - see PER_SIDE_REVERSE_BREAKAWAY_BOOST above.
+        self.measured_left_speed = 0.0
+        self.measured_right_speed = 0.0
+        self.last_odom_time = time.monotonic()
+        self._last_odom_left_m = None
+        self._last_odom_right_m = None
+
         self.linear_ctrl = SpeedPIController(LINEAR_FF_SLOPE, LINEAR_FF_OFFSET, LINEAR_KP, LINEAR_KI)
         self.angular_ctrl = SpeedPIController(
             ANGULAR_FF_SLOPE, ANGULAR_FF_OFFSET, ANGULAR_KP, ANGULAR_KI,
@@ -186,6 +206,10 @@ class UgvDriver(Node):
 
         # Board speed telemetry, republished by ugv_bringup (sole serial reader)
         self.motion_sub_ = self.create_subscription(Twist, "motion_raw", self.motion_raw_callback, 10)
+
+        # Per-side cumulative wheel distance, same source used for odometry -
+        # differentiated below for the reverse-breakaway stall detection.
+        self.odom_sub_ = self.create_subscription(Float32MultiArray, "odom/odom_raw", self.odom_raw_callback, 10)
 
         # Subscribe to joint states (ugv/joint_states topic)
         self.joint_states_sub = self.create_subscription(JointState, 'ugv/joint_states', self.joint_states_callback, 10)
@@ -213,6 +237,18 @@ class UgvDriver(Node):
         self.measured_linear = msg.linear.x * LINEAR_TELEMETRY_CORRECTION
         self.measured_angular = msg.angular.z * ANGULAR_TELEMETRY_CORRECTION
         self.last_motion_time = time.monotonic()
+
+    def odom_raw_callback(self, msg):
+        now = time.monotonic()
+        left_m, right_m = msg.data[0], msg.data[1]
+        if self._last_odom_left_m is not None:
+            dt = now - self.last_odom_time
+            if dt > 0:
+                self.measured_left_speed = (left_m - self._last_odom_left_m) / dt
+                self.measured_right_speed = (right_m - self._last_odom_right_m) / dt
+        self._last_odom_left_m = left_m
+        self._last_odom_right_m = right_m
+        self.last_odom_time = now
 
     # Runs at CONTROL_PERIOD regardless of cmd_vel message rate: reads real
     # measured speed from get_motion_data(), runs the two feedforward+PI
@@ -262,13 +298,18 @@ class UgvDriver(Node):
         left = -duty_lin + duty_ang
         right = -duty_lin - duty_ang
 
-        # Reverse-direction breakaway kick - see REVERSE_BREAKAWAY_BOOST above.
-        # Faded the same way as the angular breakaway boost, but keyed on this
-        # wheel side's own duty rather than the shared measured_angular.
-        if 0 < left < REVERSE_BREAKAWAY_DUTY:
-            left += REVERSE_BREAKAWAY_BOOST * (1.0 - left / REVERSE_BREAKAWAY_DUTY)
-        if 0 < right < REVERSE_BREAKAWAY_DUTY:
-            right += REVERSE_BREAKAWAY_BOOST * (1.0 - right / REVERSE_BREAKAWAY_DUTY)
+        # Reverse-direction breakaway kick - see PER_SIDE_REVERSE_BREAKAWAY_BOOST
+        # above. Only trusted while odom_raw is fresh; a side is only boosted
+        # while it's commanded BACKWARD (positive duty) and genuinely not
+        # moving yet, magnitude-only so the (unknown/irrelevant) sign
+        # convention of the raw per-side encoder speed doesn't matter.
+        if now - self.last_odom_time <= ODOM_FEEDBACK_TIMEOUT:
+            if left > 0 and abs(self.measured_left_speed) < PER_SIDE_BREAKAWAY_SPEED:
+                stall = 1.0 - abs(self.measured_left_speed) / PER_SIDE_BREAKAWAY_SPEED
+                left += PER_SIDE_REVERSE_BREAKAWAY_BOOST * stall
+            if right > 0 and abs(self.measured_right_speed) < PER_SIDE_BREAKAWAY_SPEED:
+                stall = 1.0 - abs(self.measured_right_speed) / PER_SIDE_BREAKAWAY_SPEED
+                right += PER_SIDE_REVERSE_BREAKAWAY_BOOST * stall
 
         # Scale both sides down together (preserving the turn ratio) if
         # their sum would exceed the duty limit.
