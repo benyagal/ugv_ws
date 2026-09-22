@@ -122,8 +122,8 @@ controller_server:
       primary_controller: "teb_local_planner::TebLocalPlannerROS"
       angular_dist_threshold: 0.785
       forward_sampling_distance: 0.5
-      rotate_to_heading_angular_vel: 0.5
-      max_angular_accel: 0.5
+      rotate_to_heading_angular_vel: 0.75
+      max_angular_accel: 0.75
       simulate_ahead_time: 1.0
       footprint_model.type: circular
       footprint_model.radius: 0.1
@@ -160,11 +160,15 @@ controller_server:
       # Lowered 2026-09-18: with only UWB (~10-20cm residual) for position and
       # no live obstacle sensor, there is nothing to gain from driving fast,
       # and the higher limits produced visibly overshooting/weaving motion.
-      max_vel_x: 0.15
-      max_vel_x_backwards: 0.1
-      max_vel_theta: 0.5
-      acc_lim_x: 0.3
-      acc_lim_theta: 0.5
+      # Raised ~50% again 2026-09-22 after the loose wheels were found and
+      # tightened: the reduced limits then read as sluggish, and the low
+      # angular accel kept the drivetrain inside its ~30 duty deadband for
+      # most of every turn's ramp-up.
+      max_vel_x: 0.225
+      max_vel_x_backwards: 0.15
+      max_vel_theta: 0.75
+      acc_lim_x: 0.45
+      acc_lim_theta: 0.75
 
 local_costmap:
   local_costmap:
@@ -255,9 +259,9 @@ behavior_server:
     # Recovery behaviours (Spin/BackUp) bypass the controller's own limits,
     # so they need matching reductions or they stay the most violent motion
     # the robot ever makes.
-    max_rotational_vel: 0.5
-    min_rotational_vel: 0.2
-    rotational_acc_lim: 1.0
+    max_rotational_vel: 0.75
+    min_rotational_vel: 0.3
+    rotational_acc_lim: 1.5
 
 waypoint_follower:
   ros__parameters:
@@ -280,10 +284,10 @@ velocity_smoother:
     # only place that also caps recovery behaviours and any manual publisher.
     # The old accel limits (2.5 / 3.2) were far above the planner's own and
     # therefore smoothed nothing at all.
-    max_velocity: [0.15, 0.0, 0.5]
-    min_velocity: [-0.1, 0.0, -0.5]
-    max_accel: [0.3, 0.0, 0.5]
-    max_decel: [-0.5, 0.0, -1.0]
+    max_velocity: [0.225, 0.0, 0.75]
+    min_velocity: [-0.15, 0.0, -0.75]
+    max_accel: [0.45, 0.0, 0.75]
+    max_decel: [-0.75, 0.0, -1.5]
     odom_topic: "/odometry/local"
     odom_duration: 0.1
     deadband_velocity: [0.0, 0.0, 0.0]

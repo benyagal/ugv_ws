@@ -97,7 +97,7 @@ def main():
 	ugv_keyboard = ugv_Keyboard("keyboard_ctrl")
 	# Set the initial speed and turn
 	xspeed_switch = True
-	(speed, turn) = (0.2, 0.5)
+	(speed, turn) = (0.3, 0.75)
 	# Set the initial position
 	(x, th) = (0, 0)
 	# Set the initial status
