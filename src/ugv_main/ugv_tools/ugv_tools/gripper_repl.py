@@ -207,6 +207,28 @@ def s1_in_and_up(bot, up_delay=5.0):
     status_print("[S1+S2/S3] Complete")
 
 
+def s1_in_up_out_down(bot, up_delay=5.0):
+    """Full grab-and-stow-then-release cycle: INUP, then OUT, then DOWN."""
+    status_print("[CYCLE] INUP -> OUT -> DOWN start")
+
+    s1_in_and_up(bot, up_delay=up_delay)
+    if stop_event.is_set():
+        status_print("[CYCLE] Cancelled")
+        return
+
+    s1_out(bot)
+    if stop_event.is_set():
+        status_print("[CYCLE] Cancelled")
+        return
+
+    move_s2_s3(bot, S2_DOWN)
+    if stop_event.is_set():
+        status_print("[CYCLE] Cancelled")
+        return
+
+    status_print("[CYCLE] INUP -> OUT -> DOWN complete")
+
+
 def s1_out(bot):
     status_print(
         f"[S1] OUT: speed={S1_OUT_SPEED}, "
@@ -347,6 +369,20 @@ def relay_pull():
     status_print("[RELAY] PULL complete")
 
 
+def relay_push_pull():
+    """Full relay cycle: PUSH, then PULL."""
+    status_print("[RELAY] PUSH+PULL start")
+
+    relay_push()
+    if stop_event.is_set():
+        status_print("[RELAY] Cancelled")
+        return
+
+    relay_pull()
+
+    status_print("[RELAY] PUSH+PULL complete")
+
+
 # ============================================================
 # ALL STOP
 # ============================================================
@@ -397,12 +433,14 @@ Commands:
   UP       S2 + S3 -> {S2_UP} degrees
   DOWN     S2 + S3 -> {S2_DOWN} degrees
   INUP     S1 IN for {S1_IN_TIME:.0f}s total, UP starts 5s in (grab + stow)
+  INUPOUTDOWN  INUP, then OUT, then DOWN (full grab + drop cycle)
 
   STOP     Cancel whatever is running right now (IN/OUT/UP/DOWN/PUSH/PULL)
            and hold S2/S3 at current position; also stops both relays
 
   PUSH     Relay OUT for 20 seconds
   PULL     Relay IN for 20 seconds
+  PUSHPULL Relay PUSH, then PULL
   RSTOP    Stop both relays
 
   STATUS   Show switch and S2/S3 state
@@ -463,6 +501,9 @@ def main():
             elif command == "INUP":
                 run_in_thread(s1_in_and_up, bot)
 
+            elif command == "INUPOUTDOWN":
+                run_in_thread(s1_in_up_out_down, bot)
+
             elif command == "STOP":
                 cancel_active()
                 all_stop(bot)
@@ -472,6 +513,9 @@ def main():
 
             elif command == "PULL":
                 run_in_thread(relay_pull)
+
+            elif command == "PUSHPULL":
+                run_in_thread(relay_push_pull)
 
             elif command == "RSTOP":
                 cancel_active()
