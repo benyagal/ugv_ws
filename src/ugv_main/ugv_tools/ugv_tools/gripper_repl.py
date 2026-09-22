@@ -32,7 +32,7 @@ S1_OUT_TIME = 5.0
 
 # S2/S3
 S2_UP = 160
-S2_DOWN = 0
+S2_DOWN = 20
 
 # Change this to adjust how quickly the S2/S3 command is sent.
 # NOTE: PWM servos themselves do not expose a speed parameter through
