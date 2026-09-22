@@ -65,7 +65,8 @@ class UgvBringup(Node):
         self.gyro_bias_samples = {"gx": [], "gy": [], "gz": []}
         self.gyro_bias = {"gx": 0.0, "gy": 0.0, "gz": 0.0}
         self.gyro_calibrated = False
-        self.GYRO_CALIBRATION_SAMPLES = 5000
+        # At the 40ms feedback rate this is ~80s of stationary averaging.
+        self.GYRO_CALIBRATION_SAMPLES = 2000
 
         # Yaw-rate scale correction (2026-09-17) - the new board's IMU chip
         # may use a different raw-to-rad/s conversion than Rosmaster_Lib
