@@ -12,6 +12,7 @@ Usage: ros2 run ugv_tools gripper_repl
 """
 import time
 import subprocess
+import sys
 import threading
 import Jetson.GPIO as GPIO
 from Rosmaster_Lib import Rosmaster
@@ -58,6 +59,27 @@ PINMUX_FIXUPS = {
 
 current_s23_angle = 0
 
+PROMPT = "GRIPPER> "
+
+# Background-thread commands print while the main thread may already be
+# blocked in input() displaying PROMPT - without this, their output lands
+# mid-prompt-line and the next real prompt looks blank. status_print clears
+# the prompt line first and redraws it, but only while one is actually shown.
+_status_lock = threading.Lock()
+_at_prompt = False
+
+
+def status_print(msg):
+    with _status_lock:
+        if _at_prompt:
+            sys.stdout.write("\r\033[K")
+            print(msg)
+            sys.stdout.write(PROMPT)
+            sys.stdout.flush()
+        else:
+            print(msg)
+
+
 # Every long-running command (S1 IN/OUT, S2/S3 move, relay PUSH/PULL) runs on
 # this thread so the main input() loop stays free to accept STOP mid-command
 # instead of blocking until the command finishes on its own.
@@ -68,7 +90,7 @@ active_thread = None
 def run_in_thread(func, *args):
     global active_thread
     if active_thread is not None and active_thread.is_alive():
-        print("[WARN] Another command is still running - send STOP first")
+        status_print("[WARN] Another command is still running - send STOP first")
         return
     stop_event.clear()
     active_thread = threading.Thread(target=func, args=args, daemon=True)
@@ -117,7 +139,7 @@ def switch_pressed():
 
 def s1_stop(bot):
     bot.set_pwm_servo(1, S1_STOP)
-    print("[S1] STOP")
+    status_print("[S1] STOP")
 
 
 def s1_bump_in(bot, duration):
@@ -133,7 +155,7 @@ def s1_bump_in(bot, duration):
 
 
 def s1_in(bot):
-    print(f"[S1] IN: speed={S1_IN_SPEED}, max {S1_IN_TIME:.0f}s")
+    status_print(f"[S1] IN: speed={S1_IN_SPEED}, max {S1_IN_TIME:.0f}s")
 
     bot.set_pwm_servo(1, S1_IN_SPEED)
 
@@ -142,23 +164,58 @@ def s1_in(bot):
     while time.monotonic() - start < S1_IN_TIME:
         if stop_event.is_set():
             s1_stop(bot)
-            print("[S1] IN cancelled")
+            status_print("[S1] IN cancelled")
             return
         time.sleep(0.05)
 
     s1_stop(bot)
-    print("[S1] IN complete")
+    status_print("[S1] IN complete")
+
+
+def s1_in_and_up(bot, up_delay=5.0):
+    """S1 IN for the full S1_IN_TIME, with a UP move to S2_UP starting
+    partway through (S1 keeps spinning while S2/S3 move, since S1 is a
+    continuous servo that doesn't need repeated commands to keep going).
+    """
+    status_print(
+        f"[S1+S2/S3] IN start, UP at {up_delay:.0f}s, total {S1_IN_TIME:.0f}s"
+    )
+
+    bot.set_pwm_servo(1, S1_IN_SPEED)
+
+    start = time.monotonic()
+    up_triggered = False
+
+    while time.monotonic() - start < S1_IN_TIME:
+        if stop_event.is_set():
+            s1_stop(bot)
+            status_print("[S1+S2/S3] Cancelled")
+            return
+
+        if not up_triggered and time.monotonic() - start >= up_delay:
+            up_triggered = True
+            status_print(f"[S1+S2/S3] {up_delay:.0f}s elapsed - starting UP")
+            move_s2_s3(bot, S2_UP)
+            if stop_event.is_set():
+                s1_stop(bot)
+                status_print("[S1+S2/S3] Cancelled")
+                return
+
+        time.sleep(0.05)
+
+    s1_stop(bot)
+    status_print("[S1+S2/S3] Complete")
 
 
 def s1_out(bot):
-    print(
+    status_print(
         f"[S1] OUT: speed={S1_OUT_SPEED}, "
         f"max {S1_OUT_TIME:.0f}s, switch active"
     )
 
     # Safety check before starting
     if switch_pressed():
-        print("[S1] SWITCH ALREADY PRESSED - OUT cancelled")
+        status_print("[S1] SWITCH ALREADY PRESSED - OUT cancelled")
         s1_stop(bot)
         return
 
@@ -169,21 +226,21 @@ def s1_out(bot):
     while time.monotonic() - start < S1_OUT_TIME:
 
         if switch_pressed():
-            print("[S1] SWITCH PRESSED -> STOP")
+            status_print("[S1] SWITCH PRESSED -> STOP")
             s1_stop(bot)
-            print(f"[S1] Bumping IN for {S1_SWITCH_BUMP_TIME:.1f}s to relieve the switch")
+            status_print(f"[S1] Bumping IN for {S1_SWITCH_BUMP_TIME:.1f}s to relieve the switch")
             s1_bump_in(bot, S1_SWITCH_BUMP_TIME)
             return
 
         if stop_event.is_set():
             s1_stop(bot)
-            print("[S1] OUT cancelled")
+            status_print("[S1] OUT cancelled")
             return
 
         time.sleep(0.02)
 
     s1_stop(bot)
-    print("[S1] OUT timeout -> STOP")
+    status_print("[S1] OUT timeout -> STOP")
 
 
 def move_s2_s3(bot, target):
@@ -199,19 +256,19 @@ def move_s2_s3(bot, target):
     start = current_s23_angle
 
     if start == target:
-        print(f"[S2/S3] Already at {target}°")
+        status_print(f"[S2/S3] Already at {target}\u00b0")
         return
 
     direction = 1 if target > start else -1
 
-    print(f"[S2/S3] Moving {start}° -> {target}°")
+    status_print(f"[S2/S3] Moving {start}\u00b0 -> {target}\u00b0")
 
     angle = start
 
     while angle != target:
         if stop_event.is_set():
             current_s23_angle = angle
-            print(f"[S2/S3] Cancelled at {angle}\u00b0")
+            status_print(f"[S2/S3] Cancelled at {angle}\u00b0")
             return
 
         angle += direction
@@ -229,7 +286,7 @@ def move_s2_s3(bot, target):
 
     current_s23_angle = target
 
-    print(f"[S2/S3] Position = {target}°")
+    status_print(f"[S2/S3] Position = {target}\u00b0")
 
 
 def s23_stop(bot):
@@ -240,9 +297,7 @@ def s23_stop(bot):
     bot.set_pwm_servo(2, 180 - current_s23_angle)
     bot.set_pwm_servo(3, current_s23_angle)
 
-    print(
-        f"[S2/S3] STOP/HOLD at {current_s23_angle}°"
-    )
+    status_print(f"[S2/S3] STOP/HOLD at {current_s23_angle}\u00b0")
 
 
 # ============================================================
@@ -253,11 +308,11 @@ def s23_stop(bot):
 def relay_stop():
     GPIO.output(RELAY_OUT_PIN, GPIO.LOW)
     GPIO.output(RELAY_IN_PIN, GPIO.LOW)
-    print("[RELAY] STOP")
+    status_print("[RELAY] STOP")
 
 
 def relay_push():
-    print("[RELAY] PUSH / OUT for 20 seconds")
+    status_print("[RELAY] PUSH / OUT for 20 seconds")
 
     GPIO.output(RELAY_IN_PIN, GPIO.LOW)
     GPIO.output(RELAY_OUT_PIN, GPIO.HIGH)
@@ -271,11 +326,11 @@ def relay_push():
     finally:
         relay_stop()
 
-    print("[RELAY] PUSH complete")
+    status_print("[RELAY] PUSH complete")
 
 
 def relay_pull():
-    print("[RELAY] PULL / IN for 20 seconds")
+    status_print("[RELAY] PULL / IN for 20 seconds")
 
     GPIO.output(RELAY_OUT_PIN, GPIO.LOW)
     GPIO.output(RELAY_IN_PIN, GPIO.HIGH)
@@ -289,7 +344,7 @@ def relay_pull():
     finally:
         relay_stop()
 
-    print("[RELAY] PULL complete")
+    status_print("[RELAY] PULL complete")
 
 
 # ============================================================
@@ -298,7 +353,7 @@ def relay_pull():
 
 
 def all_stop(bot):
-    print("[SYSTEM] STOP")
+    status_print("[SYSTEM] STOP")
 
     s1_stop(bot)
     s23_stop(bot)
@@ -341,6 +396,7 @@ Commands:
 
   UP       S2 + S3 -> {S2_UP} degrees
   DOWN     S2 + S3 -> {S2_DOWN} degrees
+  INUP     S1 IN for {S1_IN_TIME:.0f}s total, UP starts 5s in (grab + stow)
 
   STOP     Cancel whatever is running right now (IN/OUT/UP/DOWN/PUSH/PULL)
            and hold S2/S3 at current position; also stops both relays
@@ -378,10 +434,16 @@ def main():
         print_help()
 
         while True:
+            global _at_prompt
+            with _status_lock:
+                _at_prompt = True
             try:
-                command = input("\nGRIPPER> ").strip().upper()
+                command = input(f"\n{PROMPT}").strip().upper()
             except EOFError:
                 break
+            finally:
+                with _status_lock:
+                    _at_prompt = False
 
             if not command:
                 continue
@@ -397,6 +459,9 @@ def main():
 
             elif command == "DOWN":
                 run_in_thread(move_s2_s3, bot, S2_DOWN)
+
+            elif command == "INUP":
+                run_in_thread(s1_in_and_up, bot)
 
             elif command == "STOP":
                 cancel_active()
