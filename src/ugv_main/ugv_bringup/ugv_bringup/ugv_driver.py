@@ -99,15 +99,24 @@ class SpeedPIController:
 
     def update(self, target, measured, dt):
         if target == 0.0:
-            # Don't hold an integral term while stopped - avoids any lurch
-            # the next time a nonzero target is commanded.
-            self.reset()
-            return 0.0
-
-        sign = 1.0 if target > 0 else -1.0
-        feedforward = sign * (self.ff_slope * abs(target) + self.ff_offset)
-        if abs(measured) < self.breakaway_speed:
-            feedforward += sign * self.breakaway_boost
+            # No feedforward (its stiction offset has no meaningful sign at
+            # zero target), but the PI trim below KEEPS RUNNING so the axis is
+            # actively held at zero. This is what makes a straight drive stay
+            # straight despite the chassis' mechanical left/right asymmetry -
+            # returning 0 here instead left the angular loop open whenever
+            # angular.z was 0, i.e. during every straight drive.
+            feedforward = 0.0
+        else:
+            sign = 1.0 if target > 0 else -1.0
+            feedforward = sign * (self.ff_slope * abs(target) + self.ff_offset)
+            if self.breakaway_speed > 0.0 and abs(measured) < self.breakaway_speed:
+                # Faded out linearly rather than switched off at the
+                # threshold: a hard step made the axis creep just past
+                # breakaway_speed, lose the boost, stall, regain it, and so
+                # on - a stall/kick limit cycle that feels weak and never
+                # completes a turn.
+                stall = 1.0 - abs(measured) / self.breakaway_speed
+                feedforward += sign * self.breakaway_boost * stall
 
         error = target - measured
         proposed_integral = self.integral + error * dt
@@ -201,6 +210,21 @@ class UgvDriver(Node):
             self.target_angular = 0.0
 
         if now - self.last_motion_time > MOTION_FEEDBACK_TIMEOUT:
+            self.linear_ctrl.reset()
+            self.angular_ctrl.reset()
+            self.car.set_motor(0, 0, 0, 0)
+            self.get_logger().warn(
+                f"No motion_raw for >{MOTION_FEEDBACK_TIMEOUT}s - motors held stopped. "
+                "ugv_bringup must be running: it is the only process allowed to "
+                "read the board's serial port, and it republishes the speed "
+                "telemetry this node needs to close its control loop.",
+                throttle_duration_sec=5.0,
+            )
+            return
+
+        # Full stop: cut the motors outright instead of letting the PI trim
+        # brake against the measured speed.
+        if self.target_linear == 0.0 and self.target_angular == 0.0:
             self.linear_ctrl.reset()
             self.angular_ctrl.reset()
             self.car.set_motor(0, 0, 0, 0)
