@@ -31,7 +31,7 @@ S1_IN_TIME = 20.0
 S1_OUT_TIME = 5.0
 
 # S2/S3
-S2_UP = 180
+S2_UP = 160
 S2_DOWN = 0
 
 # Change this to adjust how quickly the S2/S3 command is sent.
