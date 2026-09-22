@@ -67,6 +67,17 @@ ANGULAR_FF_OFFSET = 29.9  # duty needed to overcome stiction/deadband
 ANGULAR_BREAKAWAY_BOOST = 8.1    # duty
 ANGULAR_BREAKAWAY_SPEED = 0.05   # rad/s - below this the axis counts as stalled
 
+# In-place turns were observed (2026-09-22) to stall on whichever side is
+# commanded BACKWARD (positive duty, per the sign convention below) - the
+# drivetrain needs more duty to break static friction in reverse than
+# forward. ANGULAR_BREAKAWAY_BOOST above doesn't cover this: it's gated on
+# the combined measured_angular, which already reads as "moving" once the
+# forward side alone starts spinning and pivots the chassis around the
+# still-stalled reverse side. This is applied per wheel side AFTER mixing,
+# keyed on that side's own commanded duty magnitude instead.
+REVERSE_BREAKAWAY_BOOST = 10.0   # extra duty for a stalled backward-commanded side
+REVERSE_BREAKAWAY_DUTY = 55.0    # duty below which a backward-commanded side is assumed still stalled
+
 # PI trim gains (correct the feedforward's residual error) - kept modest
 # since this loop runs in plain Python at CONTROL_PERIOD, not in firmware.
 LINEAR_KP = 40.0
@@ -250,6 +261,14 @@ class UgvDriver(Node):
         # ends up reversed vs. cmd_vel intent, same as the linear note above).
         left = -duty_lin + duty_ang
         right = -duty_lin - duty_ang
+
+        # Reverse-direction breakaway kick - see REVERSE_BREAKAWAY_BOOST above.
+        # Faded the same way as the angular breakaway boost, but keyed on this
+        # wheel side's own duty rather than the shared measured_angular.
+        if 0 < left < REVERSE_BREAKAWAY_DUTY:
+            left += REVERSE_BREAKAWAY_BOOST * (1.0 - left / REVERSE_BREAKAWAY_DUTY)
+        if 0 < right < REVERSE_BREAKAWAY_DUTY:
+            right += REVERSE_BREAKAWAY_BOOST * (1.0 - right / REVERSE_BREAKAWAY_DUTY)
 
         # Scale both sides down together (preserving the turn ratio) if
         # their sum would exceed the duty limit.
