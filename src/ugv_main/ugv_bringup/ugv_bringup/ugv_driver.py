@@ -32,8 +32,10 @@ SERIAL_PORT = '/dev/ttyUSB0'
 # just with a roughly constant scale error) as feedback.
 CONTROL_PERIOD = 0.1  # seconds (10 Hz) - matches the rate validated during calibration
 CMD_VEL_TIMEOUT = 0.5  # seconds - stop the motors if no cmd_vel arrives within this
-# Stop the motors if ugv_bringup stops publishing motion_raw: without feedback
-# the PI loops would wind up against a permanent "measured = 0" error.
+# Drop to open-loop feedforward if ugv_bringup stops publishing motion_raw:
+# holding the last (stale) measurement would wind the PI loops up against a
+# frozen error, but cutting the motors dead would also make a transient
+# publisher stall on the Jetson look like an emergency stop mid-drive.
 MOTION_FEEDBACK_TIMEOUT = 0.5  # seconds
 
 # get_motion_data() overreports real speed by a roughly constant factor,
@@ -97,7 +99,14 @@ class SpeedPIController:
     def reset(self):
         self.integral = 0.0
 
-    def update(self, target, measured, dt):
+    def update(self, target, measured, dt, closed_loop=True):
+        if not closed_loop:
+            # Pure feedforward: it is a fit of real measured hardware data, so
+            # the robot still tracks the commanded speed reasonably well - it
+            # just loses the residual trim.
+            self.reset()
+            measured = target
+
         if target == 0.0:
             # No feedforward (its stiction offset has no meaningful sign at
             # zero target), but the PI trim below KEEPS RUNNING so the axis is
@@ -209,18 +218,16 @@ class UgvDriver(Node):
             self.target_linear = 0.0
             self.target_angular = 0.0
 
-        if now - self.last_motion_time > MOTION_FEEDBACK_TIMEOUT:
-            self.linear_ctrl.reset()
-            self.angular_ctrl.reset()
-            self.car.set_motor(0, 0, 0, 0)
+        closed_loop = now - self.last_motion_time <= MOTION_FEEDBACK_TIMEOUT
+        if not closed_loop:
             self.get_logger().warn(
-                f"No motion_raw for >{MOTION_FEEDBACK_TIMEOUT}s - motors held stopped. "
-                "ugv_bringup must be running: it is the only process allowed to "
+                f"No motion_raw for >{MOTION_FEEDBACK_TIMEOUT}s - driving OPEN LOOP "
+                "(feedforward only, no speed trim). Run ugv_bringup alongside this "
+                "node for closed-loop control: it is the only process allowed to "
                 "read the board's serial port, and it republishes the speed "
-                "telemetry this node needs to close its control loop.",
+                "telemetry this node needs.",
                 throttle_duration_sec=5.0,
             )
-            return
 
         # Full stop: cut the motors outright instead of letting the PI trim
         # brake against the measured speed.
@@ -230,8 +237,8 @@ class UgvDriver(Node):
             self.car.set_motor(0, 0, 0, 0)
             return
 
-        duty_lin = self.linear_ctrl.update(self.target_linear, self.measured_linear, dt)
-        duty_ang = self.angular_ctrl.update(self.target_angular, self.measured_angular, dt)
+        duty_lin = self.linear_ctrl.update(self.target_linear, self.measured_linear, dt, closed_loop)
+        duty_ang = self.angular_ctrl.update(self.target_angular, self.measured_angular, dt, closed_loop)
 
         # m1=front-left, m2=rear-left, m3=front-right, m4=rear-right (see
         # app_fourwheel.c's Fourwheel_Ctrl). Forward needs NEGATIVE duty on
