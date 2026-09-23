@@ -31,7 +31,11 @@ def generate_launch_description():
         {'product_name': 'LDLiDAR_LD19'},
         {'topic_name': 'scan'},
         {'frame_id': 'base_lidar_link'},
-        {'port_name': '/dev/ttyACM0'},
+        # Stable by-id path (confirmed 2026-09-23): /dev/ttyACM0 is actually
+        # the DWM1001 UWB tag's SEGGER J-Link VCOM, not the lidar - the ACM
+        # index depends on USB enumeration order. The LD19 itself is the
+        # other CDC-ACM device (1a86 "USB Single Serial").
+        {'port_name': '/dev/serial/by-id/usb-1a86_USB_Single_Serial_5970075770-if00'},
         {'port_baudrate': 230400},
         {'laser_scan_dir': True},
         {'enable_angle_crop_func': True},
