@@ -51,6 +51,8 @@ RELAY_OUT_PIN = 29
 RELAY_IN_PIN = 31
 SWITCH_PIN = 33
 
+RELAY_PUSH_PULL_TIME = 18.0
+
 # Relay pinmux fixes for this carrier board
 PINMUX_FIXUPS = {
     29: ['busybox', 'devmem', '0x2430068', 'w', '0x8'],
@@ -334,14 +336,14 @@ def relay_stop():
 
 
 def relay_push():
-    status_print("[RELAY] PUSH / OUT for 20 seconds")
+    status_print(f"[RELAY] PUSH / OUT for {RELAY_PUSH_PULL_TIME:.0f} seconds")
 
     GPIO.output(RELAY_IN_PIN, GPIO.LOW)
     GPIO.output(RELAY_OUT_PIN, GPIO.HIGH)
 
     try:
         start = time.monotonic()
-        while time.monotonic() - start < 20:
+        while time.monotonic() - start < RELAY_PUSH_PULL_TIME:
             if stop_event.is_set():
                 break
             time.sleep(0.05)
@@ -352,14 +354,14 @@ def relay_push():
 
 
 def relay_pull():
-    status_print("[RELAY] PULL / IN for 20 seconds")
+    status_print(f"[RELAY] PULL / IN for {RELAY_PUSH_PULL_TIME:.0f} seconds")
 
     GPIO.output(RELAY_OUT_PIN, GPIO.LOW)
     GPIO.output(RELAY_IN_PIN, GPIO.HIGH)
 
     try:
         start = time.monotonic()
-        while time.monotonic() - start < 20:
+        while time.monotonic() - start < RELAY_PUSH_PULL_TIME:
             if stop_event.is_set():
                 break
             time.sleep(0.05)
@@ -438,8 +440,8 @@ Commands:
   STOP     Cancel whatever is running right now (IN/OUT/UP/DOWN/PUSH/PULL)
            and hold S2/S3 at current position; also stops both relays
 
-  PUSH     Relay OUT for 20 seconds
-  PULL     Relay IN for 20 seconds
+  PUSH     Relay OUT for {RELAY_PUSH_PULL_TIME:.0f} seconds
+  PULL     Relay IN for {RELAY_PUSH_PULL_TIME:.0f} seconds
   PUSHPULL Relay PUSH, then PULL
   RSTOP    Stop both relays
 
