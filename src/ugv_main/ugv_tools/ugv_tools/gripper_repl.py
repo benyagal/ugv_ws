@@ -29,7 +29,7 @@ S1_IN_SPEED = 50
 S1_STOP = 90
 S1_OUT_SPEED = 130
 
-S1_IN_TIME = 20.0
+S1_IN_TIME = 10.0
 S1_OUT_TIME = 5.0
 
 # How long to jog S1 back IN once the microswitch trips during OUT, so the
@@ -51,7 +51,8 @@ RELAY_OUT_PIN = 29
 RELAY_IN_PIN = 31
 SWITCH_PIN = 33
 
-RELAY_PUSH_PULL_TIME = 18.0
+RELAY_PUSH_TIME = 18.0
+RELAY_PULL_TIME = 20.0
 
 # Relay pinmux fixes for this carrier board
 PINMUX_FIXUPS = {
@@ -336,14 +337,14 @@ def relay_stop():
 
 
 def relay_push():
-    status_print(f"[RELAY] PUSH / OUT for {RELAY_PUSH_PULL_TIME:.0f} seconds")
+    status_print(f"[RELAY] PUSH / OUT for {RELAY_PUSH_TIME:.0f} seconds")
 
     GPIO.output(RELAY_IN_PIN, GPIO.LOW)
     GPIO.output(RELAY_OUT_PIN, GPIO.HIGH)
 
     try:
         start = time.monotonic()
-        while time.monotonic() - start < RELAY_PUSH_PULL_TIME:
+        while time.monotonic() - start < RELAY_PUSH_TIME:
             if stop_event.is_set():
                 break
             time.sleep(0.05)
@@ -354,14 +355,14 @@ def relay_push():
 
 
 def relay_pull():
-    status_print(f"[RELAY] PULL / IN for {RELAY_PUSH_PULL_TIME:.0f} seconds")
+    status_print(f"[RELAY] PULL / IN for {RELAY_PULL_TIME:.0f} seconds")
 
     GPIO.output(RELAY_OUT_PIN, GPIO.LOW)
     GPIO.output(RELAY_IN_PIN, GPIO.HIGH)
 
     try:
         start = time.monotonic()
-        while time.monotonic() - start < RELAY_PUSH_PULL_TIME:
+        while time.monotonic() - start < RELAY_PULL_TIME:
             if stop_event.is_set():
                 break
             time.sleep(0.05)
@@ -440,8 +441,8 @@ Commands:
   STOP     Cancel whatever is running right now (IN/OUT/UP/DOWN/PUSH/PULL)
            and hold S2/S3 at current position; also stops both relays
 
-  PUSH     Relay OUT for {RELAY_PUSH_PULL_TIME:.0f} seconds
-  PULL     Relay IN for {RELAY_PUSH_PULL_TIME:.0f} seconds
+  PUSH     Relay OUT for {RELAY_PUSH_TIME:.0f} seconds
+  PULL     Relay IN for {RELAY_PULL_TIME:.0f} seconds
   PUSHPULL Relay PUSH, then PULL
   RSTOP    Stop both relays
 
