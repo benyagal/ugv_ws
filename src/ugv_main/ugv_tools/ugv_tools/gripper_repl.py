@@ -37,7 +37,7 @@ S1_OUT_TIME = 5.0
 S1_SWITCH_BUMP_TIME = 0.5
 
 # S2/S3
-S2_UP = 160
+S2_UP = 150
 S2_DOWN = 0
 
 # Change this to adjust how quickly the S2/S3 command is sent.
