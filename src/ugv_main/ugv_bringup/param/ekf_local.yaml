@@ -38,16 +38,17 @@ ekf_local_filter_node:
         odom0_pose_rejection_threshold: 20.0
 
         imu0: /imu/data
-        # Only vyaw: the complementary filter's absolute yaw is relative to its
-        # own startup, so fusing it overrode every RViz set_pose on the next msg.
+        # Yaw fused differentially (only its changes), so RViz set_pose sticks.
+        # vyaw stays off: /imu/data angular_velocity.z has the opposite sign
+        # to its orientation yaw (vyaw-only fusion made the robot turn reversed).
         imu0_config: [false, false, false,
-                      false, false, false,
-                      false, false, false,
                       false, false, true,
+                      false, false, false,
+                      false, false, false,
                       false, false, false]
         imu0_queue_size: 10
         imu0_nodelay: false
-        imu0_differential: false
+        imu0_differential: true
         # Changed from true: with imu0_relative, this filter tracks yaw
         # relative to the FIRST /imu/data measurement received since node
         # startup, independent of any later set_pose call - the set_pose
