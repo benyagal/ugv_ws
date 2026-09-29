@@ -123,7 +123,10 @@ controller_server:
       angular_dist_threshold: 0.785
       forward_sampling_distance: 0.5
       rotate_to_heading_angular_vel: 0.75
-      max_angular_accel: 0.75
+      # The shim clamps to MEASURED vel + accel*dt: at 0.75 a stalled robot
+      # only ever got 0.075 rad/s (below breakaway). velocity_smoother
+      # (OPEN_LOOP) still enforces the real 0.75 rad/s^2 ramp downstream.
+      max_angular_accel: 3.0
       simulate_ahead_time: 1.0
       footprint_model.type: circular
       footprint_model.radius: 0.1

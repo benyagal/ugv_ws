@@ -249,7 +249,8 @@ def generate_launch_description():
             # 5-10cm. A too-tight covariance made the EKF's outlier rejection
             # (pose0_rejection_threshold) throw away most real corrections.
             # Layout: [xx, xy, xz, yx, yy, yz, zx, zy, zz]
-            {'position_cov': [0.01, 0.0, 0.0, 0.0, 0.01, 0.0, 0.0, 0.0, 0.01]},
+            # 0.04 (20cm sigma): observed jumps while driving are tens of cm.
+            {'position_cov': [0.04, 0.0, 0.0, 0.0, 0.04, 0.0, 0.0, 0.0, 0.04]},
         ],
         remappings=[
             ('input/tag_position', '/uwb/point_raw'),

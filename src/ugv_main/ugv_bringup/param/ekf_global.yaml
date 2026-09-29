@@ -33,9 +33,11 @@ ekf_global_filter_node:
         # rotation bug earlier when base_node.cpp's own yaw became IMU-
         # derived while ekf_local also fused imu0 directly.
         odom0: /odometry/local
+        # vx fused so x/y are dead-reckoned between UWB fixes instead of being
+        # dragged directly by each (noisy) UWB sample.
         odom0_config: [false, false, false,
                        false, false, true,
-                       false, false, false,
+                       true,  false, false,
                        false, false, true,
                        false, false, false]
         odom0_queue_size: 10
