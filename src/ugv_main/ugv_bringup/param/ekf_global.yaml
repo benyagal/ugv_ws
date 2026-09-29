@@ -45,7 +45,6 @@ ekf_global_filter_node:
         odom0_differential: false
         odom0_relative: false
         odom0_pose_rejection_threshold: 20.0
-        odom0_twist_rejection_threshold: 1.542
 
         pose0: /uwb/pose
         pose0_config: [true, true, false,
