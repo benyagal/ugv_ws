@@ -65,6 +65,10 @@ class UgvBringup(Node):
         self.gyro_bias_samples = {"gx": [], "gy": [], "gz": []}
         self.gyro_bias = {"gx": 0.0, "gy": 0.0, "gz": 0.0}
         self.gyro_calibrated = False
+        # Upside-down IMU (az < 0) reverses gz vs. world yaw; the filter's
+        # absolute yaw hid it, but any rate/delta yaw fusion turned backwards.
+        self.accel_z_samples = []
+        self.imu_flipped = False
         # At the 40ms feedback rate this is ~80s of stationary averaging.
         self.GYRO_CALIBRATION_SAMPLES = 2000
 
@@ -100,19 +104,29 @@ class UgvBringup(Node):
             self.gyro_bias_samples["gx"].append(gx)
             self.gyro_bias_samples["gy"].append(gy)
             self.gyro_bias_samples["gz"].append(gz)
+            self.accel_z_samples.append(self.car.get_accelerometer_data()[2])
             if len(self.gyro_bias_samples["gz"]) >= self.GYRO_CALIBRATION_SAMPLES:
                 for axis in ("gx", "gy", "gz"):
                     samples = self.gyro_bias_samples[axis]
                     self.gyro_bias[axis] = sum(samples) / len(samples)
+                mean_az = sum(self.accel_z_samples) / len(self.accel_z_samples)
+                self.imu_flipped = mean_az < 0.0
                 self.gyro_calibrated = True
                 self.get_logger().info(
                     f"Gyro bias calibration done: gx={self.gyro_bias['gx']:.4f} "
-                    f"gy={self.gyro_bias['gy']:.4f} gz={self.gyro_bias['gz']:.4f} (rad/s)"
+                    f"gy={self.gyro_bias['gy']:.4f} gz={self.gyro_bias['gz']:.4f} (rad/s), "
+                    f"mean az={mean_az:.2f} m/s^2 -> imu_flipped={self.imu_flipped}"
                 )
             # Don't publish until calibration completes - see old-code rationale.
             return
 
         ax, ay, az = self.car.get_accelerometer_data()
+        wx = gx - self.gyro_bias["gx"]
+        wy = gy - self.gyro_bias["gy"]
+        wz = (gz - self.gyro_bias["gz"]) * self.gyro_z_scale_correction
+        if self.imu_flipped:
+            # 180 deg about x: y and z axes reverse, x stays.
+            ay, az, wy, wz = -ay, -az, -wy, -wz
 
         msg = Imu()
         msg.header = Header()
@@ -121,9 +135,9 @@ class UgvBringup(Node):
         msg.linear_acceleration.x = ax
         msg.linear_acceleration.y = ay
         msg.linear_acceleration.z = az
-        msg.angular_velocity.x = gx - self.gyro_bias["gx"]
-        msg.angular_velocity.y = gy - self.gyro_bias["gy"]
-        msg.angular_velocity.z = (gz - self.gyro_bias["gz"]) * self.gyro_z_scale_correction
+        msg.angular_velocity.x = wx
+        msg.angular_velocity.y = wy
+        msg.angular_velocity.z = wz
         self.imu_data_raw_publisher_.publish(msg)
 
     def publish_imu_mag(self):
