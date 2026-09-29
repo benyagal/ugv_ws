@@ -1,0 +1,45 @@
+<!--
+  Stock Nav2 Humble navigate_to_pose_w_replanning_and_recovery.xml, plus a
+  HeadingCalibration gate in front of FollowPath: on each new request from
+  uwb_heading_estimator it pauses path following, drives straight ahead
+  (DriveOnHeading stops itself if the local costmap shows an obstacle), and
+  then resumes. Used only when nav_uwb.launch.py uwb_heading_correction:=true.
+-->
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <RecoveryNode number_of_retries="6" name="NavigateRecovery">
+      <PipelineSequence name="NavigateWithReplanning">
+        <RateController hz="1.0">
+          <RecoveryNode number_of_retries="1" name="ComputePathToPose">
+            <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+            <ClearEntireCostmap name="ClearGlobalCostmap-Context" service_name="global_costmap/clear_entirely_global_costmap"/>
+          </RecoveryNode>
+        </RateController>
+        <ReactiveSequence name="HeadingCalibrationAndFollowPath">
+          <HeadingCalibration request_topic="/uwb/heading_calibration_request">
+            <SequenceStar name="CalibrationDrive">
+              <CancelControl name="ControlCancel"/>
+              <DriveOnHeading dist_to_travel="1.5" speed="0.15" time_allowance="20"/>
+            </SequenceStar>
+          </HeadingCalibration>
+          <RecoveryNode number_of_retries="1" name="FollowPath">
+            <FollowPath path="{path}" controller_id="FollowPath"/>
+            <ClearEntireCostmap name="ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap"/>
+          </RecoveryNode>
+        </ReactiveSequence>
+      </PipelineSequence>
+      <ReactiveFallback name="RecoveryFallback">
+        <GoalUpdated/>
+        <RoundRobin name="RecoveryActions">
+          <Sequence name="ClearingActions">
+            <ClearEntireCostmap name="ClearLocalCostmap-Subtree" service_name="local_costmap/clear_entirely_local_costmap"/>
+            <ClearEntireCostmap name="ClearGlobalCostmap-Subtree" service_name="global_costmap/clear_entirely_global_costmap"/>
+          </Sequence>
+          <Spin spin_dist="1.57"/>
+          <Wait wait_duration="5"/>
+          <BackUp backup_dist="0.30" backup_speed="0.05"/>
+        </RoundRobin>
+      </ReactiveFallback>
+    </RecoveryNode>
+  </BehaviorTree>
+</root>

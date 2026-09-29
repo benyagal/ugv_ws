@@ -27,6 +27,7 @@ setup(
         'console_scripts': [
             'uwb_simulator = ugv_uwb_localization.uwb_simulator:main',
             'uwb_driver = ugv_uwb_localization.uwb_driver_node:main',
+            'uwb_heading_estimator = ugv_uwb_localization.uwb_heading_estimator:main',
         ],
     },
 )

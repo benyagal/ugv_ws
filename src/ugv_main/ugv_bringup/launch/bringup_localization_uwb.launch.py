@@ -80,6 +80,13 @@ def generate_launch_description():
         description='Path to the pre-built 2D map YAML file'
     )
 
+    uwb_heading_correction_arg = DeclareLaunchArgument(
+        'uwb_heading_correction',
+        default_value='false',
+        description='Correct the global yaw from UWB positions on straight segments '
+                    '(uwb_heading_estimator + ekf_global /uwb/heading fusion)'
+    )
+
     robot_state_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(get_package_share_directory('ugv_description'), 'launch', 'display.launch.py')
@@ -157,16 +164,59 @@ def generate_launch_description():
         remappings=[('/odometry/filtered', '/odometry/local'), ('set_pose', 'ekf_local/set_pose')]
     )
 
+    global_ekf_params = [
+        os.path.join(get_package_share_directory('ugv_bringup'), 'param', 'ekf_global.yaml'),
+        {'use_sim_time': LaunchConfiguration('use_sim_time')},
+    ]
+    global_ekf_remappings = [('/odometry/filtered', '/odometry/global'), ('set_pose', 'ekf_global/set_pose')]
+
     global_ekf_node = Node(
+        condition=UnlessCondition(LaunchConfiguration('uwb_heading_correction')),
         package='robot_localization',
         executable='ekf_node',
         name='ekf_global_filter_node',
         output='screen',
+        parameters=global_ekf_params,
+        remappings=global_ekf_remappings,
+    )
+
+    # Local yaw is only used as a rate here: the absolute yaw would pull every
+    # /uwb/heading correction straight back to the drifting gyro heading.
+    global_ekf_heading_node = Node(
+        condition=IfCondition(LaunchConfiguration('uwb_heading_correction')),
+        package='robot_localization',
+        executable='ekf_node',
+        name='ekf_global_filter_node',
+        output='screen',
+        parameters=global_ekf_params + [{
+            'odom0_config': [False, False, False,
+                             False, False, False,
+                             True, False, False,
+                             False, False, True,
+                             False, False, False],
+            'pose1': '/uwb/heading',
+            'pose1_config': [False, False, False,
+                             False, False, True,
+                             False, False, False,
+                             False, False, False,
+                             False, False, False],
+            'pose1_queue_size': 5,
+            'pose1_differential': False,
+            'pose1_relative': False,
+        }],
+        remappings=global_ekf_remappings,
+    )
+
+    uwb_heading_estimator_node = Node(
+        condition=IfCondition(LaunchConfiguration('uwb_heading_correction')),
+        package='ugv_uwb_localization',
+        executable='uwb_heading_estimator',
+        name='uwb_heading_estimator',
+        output='screen',
         parameters=[
-            os.path.join(get_package_share_directory('ugv_bringup'), 'param', 'ekf_global.yaml'),
             {'use_sim_time': LaunchConfiguration('use_sim_time')},
-        ],
-        remappings=[('/odometry/filtered', '/odometry/global'), ('set_pose', 'ekf_global/set_pose')]
+            {'active_requests': True},
+        ]
     )
 
     initialpose_bridge_node = Node(
@@ -311,6 +361,7 @@ def generate_launch_description():
         uwb_tag_id_arg,
         use_map_server_arg,
         map_arg,
+        uwb_heading_correction_arg,
         robot_state_launch,
         bringup_node,
         imu_complementary_filter_node,
@@ -324,6 +375,8 @@ def generate_launch_description():
         uwb_transform_node,
         uwb_driver_node,
         global_ekf_node,
+        global_ekf_heading_node,
+        uwb_heading_estimator_node,
         initialpose_bridge_node,
         map_server_node,
         lifecycle_manager_map_node,

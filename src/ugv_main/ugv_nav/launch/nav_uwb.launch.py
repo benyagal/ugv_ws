@@ -1,16 +1,58 @@
 import os
+import tempfile
 
+import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
+
+
+def launch_navigation(context):
+    nav2_bringup_dir = get_package_share_directory('nav2_bringup')
+    params_file = LaunchConfiguration('params_file').perform(context)
+
+    if LaunchConfiguration('uwb_heading_correction').perform(context).lower() == 'true':
+        with open(params_file) as f:
+            params = yaml.safe_load(f)
+        bt_params = params['bt_navigator']['ros__parameters']
+        bt_params['default_nav_to_pose_bt_xml'] = os.path.join(
+            get_package_share_directory('ugv_nav_bt'), 'behavior_trees',
+            'navigate_to_pose_heading_calibration.xml')
+        bt_params['plugin_lib_names'] = (
+            bt_params['plugin_lib_names'] + ['ugv_heading_calibration_bt_node'])
+        with tempfile.NamedTemporaryFile(
+                'w', prefix='uwb_teb_heading_', suffix='.yaml', delete=False) as f:
+            yaml.safe_dump(params, f)
+            params_file = f.name
+
+    # Stock Nav2 navigation servers (controller_server/smoother_server/
+    # planner_server/behavior_server/bt_navigator/waypoint_follower/
+    # velocity_smoother/lifecycle_manager_navigation). Deliberately reusing
+    # nav2_bringup's own navigation_launch.py as-is instead of a local copy -
+    # it already excludes AMCL/map_server, which is exactly what we want
+    # since both are handled by bringup_localization_uwb.launch.py above.
+    return [IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(nav2_bringup_dir, 'launch', 'navigation_launch.py')
+        ),
+        launch_arguments={
+            'use_sim_time': LaunchConfiguration('use_sim_time'),
+            'autostart': LaunchConfiguration('autostart'),
+            'params_file': params_file,
+            # navigation_launch.py evaluates this via PythonExpression(['not
+            # ', use_composition]) i.e. a real Python eval() - it must be the
+            # capitalized Python literal 'False', not lowercase 'false'
+            # (which raised "name 'false' is not defined").
+            'use_composition': 'False',
+        }.items()
+    )]
 
 
 def generate_launch_description():
     ugv_nav_dir = get_package_share_directory('ugv_nav')
     ugv_bringup_dir = get_package_share_directory('ugv_bringup')
-    nav2_bringup_dir = get_package_share_directory('nav2_bringup')
 
     default_map_path = os.path.join(ugv_nav_dir, 'maps', 'map.yaml')
     default_params_path = os.path.join(ugv_nav_dir, 'param', 'uwb_teb.yaml')
@@ -59,6 +101,13 @@ def generate_launch_description():
         description='Automatically start the Nav2 lifecycle nodes'
     )
 
+    uwb_heading_correction_arg = DeclareLaunchArgument(
+        'uwb_heading_correction',
+        default_value='false',
+        description='Correct the yaw from UWB on straight segments, and drive a short '
+                    'straight calibration segment during navigation when none was found'
+    )
+
     # Sensors + IMU/UWB EKF localization (map->odom TF) + static map_server
     # (no AMCL - the map is only used here to feed the costmaps' static
     # layer, not for scan-matching localization). No LIDAR is started here.
@@ -73,28 +122,7 @@ def generate_launch_description():
             'use_uwb_sim': LaunchConfiguration('use_uwb_sim'),
             'map': LaunchConfiguration('map'),
             'use_map_server': 'true',
-        }.items()
-    )
-
-    # Stock Nav2 navigation servers (controller_server/smoother_server/
-    # planner_server/behavior_server/bt_navigator/waypoint_follower/
-    # velocity_smoother/lifecycle_manager_navigation). Deliberately reusing
-    # nav2_bringup's own navigation_launch.py as-is instead of a local copy -
-    # it already excludes AMCL/map_server, which is exactly what we want
-    # since both are handled by bringup_localization_uwb.launch.py above.
-    navigation_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(nav2_bringup_dir, 'launch', 'navigation_launch.py')
-        ),
-        launch_arguments={
-            'use_sim_time': LaunchConfiguration('use_sim_time'),
-            'autostart': LaunchConfiguration('autostart'),
-            'params_file': LaunchConfiguration('params_file'),
-            # navigation_launch.py evaluates this via PythonExpression(['not
-            # ', use_composition]) i.e. a real Python eval() - it must be the
-            # capitalized Python literal 'False', not lowercase 'false'
-            # (which raised "name 'false' is not defined").
-            'use_composition': 'False',
+            'uwb_heading_correction': LaunchConfiguration('uwb_heading_correction'),
         }.items()
     )
 
@@ -106,6 +134,7 @@ def generate_launch_description():
         map_arg,
         params_file_arg,
         autostart_arg,
+        uwb_heading_correction_arg,
         localization_launch,
-        navigation_launch,
+        OpaqueFunction(function=launch_navigation),
     ])
