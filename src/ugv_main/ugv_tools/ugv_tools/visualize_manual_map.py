@@ -24,6 +24,7 @@ DRINKER_COLOR = (30, 90, 200)
 FEEDER_COLOR = (30, 150, 60)
 DIM_COLOR = (0, 0, 0)
 WALL_COLOR = (0, 0, 0)
+ANCHOR_COLOR = (230, 120, 0)
 
 OUTPUT_PNG_NAME = "coop_map_diagram.png"
 OUTPUT_PNG = os.path.join(gm.OUTPUT_DIR, OUTPUT_PNG_NAME)
@@ -74,25 +75,36 @@ def render():
     draw.rectangle([P(0, gm.BUILDING_WIDTH_M), P(gm.BUILDING_LENGTH_M, 0)], outline=WALL_COLOR, width=3)
 
     # vegfali dolgozoi folyoso keritesek
-    fence_near_x = gm.END_WALKWAY_DEPTH_M
-    fence_far_x = gm.BUILDING_LENGTH_M - gm.END_WALKWAY_DEPTH_M
+    fence_near_x, fence_far_x = gm.fence_x_positions()
     for fx in (fence_near_x, fence_far_x):
         draw.line([P(fx, 0), P(fx, gm.BUILDING_WIDTH_M)], fill=FENCE_COLOR, width=3)
 
-    # sorok (a kerites es a sorok vege kozotti res: ROW_END_CLEARANCE_M, itt kel at a robot)
-    row_x_start = fence_near_x + gm.ROW_END_CLEARANCE_M
-    row_x_end = fence_far_x - gm.ROW_END_CLEARANCE_M
+    # sorok (a kerites es a sorok vege kozotti res: ROW_END_CLEARANCE_*, itt kel at a robot)
+    row_x_start, row_x_end = gm.row_x_range()
     row_y_positions = gm.compute_row_y_positions()
     for row_type, y_m in zip(gm.ROW_PATTERN, row_y_positions):
         color = DRINKER_COLOR if row_type == "itato" else FEEDER_COLOR
         draw.line([P(row_x_start, y_m), P(row_x_end, y_m)], fill=color, width=2)
         if row_type == "etetu":
             r_px = gm.FEEDER_BULGE_DIAMETER_M / 2.0 / gm.RESOLUTION_M_PER_PX * SCALE
-            x = row_x_start
-            while x <= row_x_end:
+            for x in gm.feeder_x_positions():
                 cx, cy = P(x, y_m)
                 draw.ellipse([cx - r_px, cy - r_px, cx + r_px, cy + r_px], outline=FEEDER_COLOR, width=2)
-                x += gm.FEEDER_BULGE_SPACING_M
+
+    # UWB anchorok (csak a diagramon, a pgm-ben nem akadalyok)
+    for name, (ax, ay, _) in gm.anchor_building_positions().items():
+        cx, cy = P(ax, ay)
+        draw.rectangle([cx - 7, cy - 7, cx + 7, cy + 7], fill=ANCHOR_COLOR)
+        label = f"{name} (origo)" if name == gm.ORIGIN_ANCHOR_NAME else name
+        draw.text((cx + 10, cy - 8), label, fill=ANCHOR_COLOR, font=font)
+
+    # origo sarok es tengelyek
+    ox, oy = P(0, 0)
+    draw.line([(ox, oy), (ox + 60, oy)], fill=WALL_COLOR, width=3)
+    draw.line([(ox, oy), (ox, oy - 60)], fill=WALL_COLOR, width=3)
+    draw.text((ox + 64, oy - 10), "+X", fill=WALL_COLOR, font=font)
+    draw.text((ox - 8, oy - 82), "+Y", fill=WALL_COLOR, font=font)
+    draw.text((ox - 60, oy + 8), "(0,0)", fill=WALL_COLOR, font=font_small)
 
     # --- meretvonalak ---
     # teljes hossz (also szelen kivul)
@@ -105,24 +117,28 @@ def render():
     y0, y1 = P(0, 0)[1], P(0, gm.BUILDING_WIDTH_M)[1]
     draw_dimension(draw, x_dim, y0, x_dim, y1, f"{gm.BUILDING_WIDTH_M} m (szelesseg)", font)
 
-    # vegfali folyoso melysege (mindket vegen)
-    for fx, label_side in ((fence_near_x, "kozel"), (fence_far_x, "tavoli")):
-        x_a = P(0 if fx == fence_near_x else gm.BUILDING_LENGTH_M, 0)[0]
-        x_b = P(fx, 0)[0]
-        y_dim2 = P(0, 0)[1] + 70
-        draw_dimension(draw, x_a, y_dim2, x_b, y_dim2, f"{gm.END_WALKWAY_DEPTH_M} m", font_small)
+    # vegfali folyoso melysege (mindket vegen kulon)
+    y_dim2 = P(0, 0)[1] + 70
+    draw_dimension(draw, P(0, 0)[0], y_dim2, P(fence_near_x, 0)[0], y_dim2,
+                   f"{gm.END_WALKWAY_DEPTH_NEAR_M} m", font_small)
+    draw_dimension(draw, P(fence_far_x, 0)[0], y_dim2, P(gm.BUILDING_LENGTH_M, 0)[0], y_dim2,
+                   f"{gm.END_WALKWAY_DEPTH_FAR_M} m", font_small)
 
-    # sorok tavolsaga (elso ket sor kozott, peldakent)
-    if len(row_y_positions) >= 2:
-        spacing = row_y_positions[1] - row_y_positions[0]
-        x_dim2 = P(row_x_start, 0)[0] - 20
-        y_a, y_b = P(0, row_y_positions[0])[1], P(0, row_y_positions[1])[1]
-        draw_dimension(draw, x_dim2, y_a, x_dim2, y_b, f"{spacing:.2f} m", font_small)
+    # sorok tavolsaga (minden szomszedos par kozott)
+    x_dim2 = P(row_x_start, 0)[0] - 20
+    for y_lo, y_hi in zip(row_y_positions, row_y_positions[1:]):
+        y_a, y_b = P(0, y_lo)[1], P(0, y_hi)[1]
+        draw_dimension(draw, x_dim2, y_a, x_dim2, y_b, f"{y_hi - y_lo:.2f} m", font_small)
+    # fal -> elso sor
+    draw_dimension(draw, x_dim2, P(0, 0)[1], x_dim2, P(0, row_y_positions[0])[1],
+                   f"{row_y_positions[0]:.2f} m", font_small)
 
-    # robot-atjaro res a kerites es a sorok vege kozott (kozeli oldalon, peldakent)
+    # robot-atjaro res a kerites es a sorok vege kozott (mindket vegen)
     y_dim3 = P(0, row_y_positions[0])[1] - 25
-    x_a, x_b = P(fence_near_x, 0)[0], P(row_x_start, 0)[0]
-    draw_dimension(draw, x_a, y_dim3, x_b, y_dim3, f"{gm.ROW_END_CLEARANCE_M} m atjaro", font_small)
+    draw_dimension(draw, P(fence_near_x, 0)[0], y_dim3, P(row_x_start, 0)[0], y_dim3,
+                   f"{gm.ROW_END_CLEARANCE_NEAR_M} m atjaro", font_small)
+    draw_dimension(draw, P(row_x_end, 0)[0], y_dim3, P(fence_far_x, 0)[0], y_dim3,
+                   f"{gm.ROW_END_CLEARANCE_FAR_M} m atjaro", font_small)
 
     # etetu bura atmero (elso etetu sor elso bura melle irva)
     for row_type, y_m in zip(gm.ROW_PATTERN, row_y_positions):
