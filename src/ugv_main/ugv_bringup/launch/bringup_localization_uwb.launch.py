@@ -7,6 +7,7 @@ from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -87,6 +88,18 @@ def generate_launch_description():
                     '(uwb_heading_estimator + ekf_global /uwb/heading fusion)'
     )
 
+    use_gyro_angular_feedback_arg = DeclareLaunchArgument(
+        'use_gyro_angular_feedback',
+        default_value='true',
+        description='ugv_driver: close the turn-rate loop on the IMU gyro instead of the wheel encoders'
+    )
+
+    stall_detection_arg = DeclareLaunchArgument(
+        'stall_detection',
+        default_value='true',
+        description='ugv_driver: stop the motors when a commanded turn makes no rotation at full duty'
+    )
+
     robot_state_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(get_package_share_directory('ugv_description'), 'launch', 'display.launch.py')
@@ -135,6 +148,12 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration('start_base_stack')),
         package='ugv_bringup',
         executable='ugv_driver',
+        parameters=[{
+            'use_gyro_angular_feedback': ParameterValue(
+                LaunchConfiguration('use_gyro_angular_feedback'), value_type=bool),
+            'stall_detection': ParameterValue(
+                LaunchConfiguration('stall_detection'), value_type=bool),
+        }],
     )
 
     base_node = Node(
@@ -362,6 +381,8 @@ def generate_launch_description():
         use_map_server_arg,
         map_arg,
         uwb_heading_correction_arg,
+        use_gyro_angular_feedback_arg,
+        stall_detection_arg,
         robot_state_launch,
         bringup_node,
         imu_complementary_filter_node,

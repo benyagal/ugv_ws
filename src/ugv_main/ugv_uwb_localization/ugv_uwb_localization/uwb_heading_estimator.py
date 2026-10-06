@@ -87,25 +87,36 @@ class UwbHeadingEstimator(Node):
         self.latest_stamp = stamp
         self.odom_distance = 0.0
 
-    def end_segment(self):
+    def end_segment(self, end_reason):
         self.active = False
         if self.odom_distance >= 0.5 * self.min_length:
-            self.evaluate()
+            self.evaluate(end_reason)
 
     def local_callback(self, msg):
         stamp = Time.from_msg(msg.header.stamp).nanoseconds * 1e-9
         vx = msg.twist.twist.linear.x
-        straight = (abs(vx) >= self.min_speed
-                    and abs(msg.twist.twist.angular.z) <= self.max_yaw_rate)
+        wz = msg.twist.twist.angular.z
+        straight = abs(vx) >= self.min_speed and abs(wz) <= self.max_yaw_rate
         direction = math.copysign(1.0, vx)
         yaw = yaw_of(msg.pose.pose.orientation)
 
         if self.active:
             offset = wrap(yaw - self.yaw_ref)
             span = max(self.yaw_offsets + [offset]) - min(self.yaw_offsets + [offset])
-            if (not straight or direction != self.direction or span > self.max_yaw_change
-                    or self.odom_distance >= self.max_length):
-                self.end_segment()
+            end_reason = None
+            if abs(vx) < self.min_speed:
+                end_reason = f'slow/stopped v={vx:.2f} m/s'
+            elif abs(wz) > self.max_yaw_rate:
+                end_reason = f'turning {wz:+.3f} rad/s > {self.max_yaw_rate:.3f}'
+            elif direction != self.direction:
+                end_reason = 'direction change'
+            elif span > self.max_yaw_change:
+                end_reason = (f'heading changed {math.degrees(span):.1f} deg > '
+                              f'{math.degrees(self.max_yaw_change):.1f}')
+            elif self.odom_distance >= self.max_length:
+                end_reason = f'max length {self.max_length:.1f} m'
+            if end_reason is not None:
+                self.end_segment(end_reason)
             else:
                 dt = min(max(stamp - self.last_local_time, 0.0), 0.5)
                 self.odom_distance += abs(vx) * dt
@@ -129,11 +140,12 @@ class UwbHeadingEstimator(Node):
         self.last_accepted = self.now_sec()
         self.request_pending = False
 
-    def evaluate(self):
+    def evaluate(self, end_reason):
         n = len(self.points)
         if n < 3:
             self.get_logger().info(
-                f'segment {self.odom_distance:.2f} m (odom) -> rejected: only {n} UWB samples')
+                f'segment {self.odom_distance:.2f} m (odom) -> rejected: only {n} UWB samples '
+                f'[end: {end_reason}]')
             return
 
         mx = sum(x for x, _ in self.points) / n
@@ -182,7 +194,8 @@ class UwbHeadingEstimator(Node):
         self.get_logger().info(
             f'segment L={length:.2f} m N={n} heading={math.degrees(heading):.1f} deg '
             f'sigma={math.degrees(sigma):.1f} deg rms={rms:.3f} m ratio={ratio:.2f} '
-            f'ekf_yaw={ekf} -> {"ACCEPTED" if reason is None else "rejected: " + reason}')
+            f'ekf_yaw={ekf} -> {"ACCEPTED" if reason is None else "rejected: " + reason} '
+            f'[end: {end_reason}]')
         if reason is not None:
             return
 

@@ -2,7 +2,7 @@
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
-from sensor_msgs.msg import JointState
+from sensor_msgs.msg import Imu, JointState
 from std_msgs.msg import Float32, Float32MultiArray
 import subprocess
 import time
@@ -87,6 +87,27 @@ ANGULAR_KI = 15.0  # raised from 8.0 to correct residual undershoot faster
 
 DUTY_LIMIT = 100.0
 
+# GYRO ANGULAR FEEDBACK (2026-10-02): the encoder-derived angular speed only
+# sees wheel-speed difference, so on uneven ground a slipping or lifted wheel
+# looks like rotation and the loop stops pushing. imu/data_raw (bias- and
+# flip-corrected in ugv_bringup) measures the chassis' real yaw rate instead.
+# Falls back to the encoder value whenever the IMU is stale (e.g. during
+# ugv_bringup's ~80s startup gyro calibration).
+IMU_FEEDBACK_TIMEOUT = 0.3  # seconds
+# A wrong gyro sign would turn the loop into positive feedback (full-duty
+# spin), so gyro feedback is disabled if it keeps disagreeing with encoders.
+SIGN_CHECK_MIN_SPEED = 0.2  # rad/s - both sources must exceed this to compare
+SIGN_CHECK_CYCLES = 10      # consecutive control cycles (~1s)
+
+# STALL DETECTION (2026-10-02): turning commanded, angular duty near the limit,
+# but the chassis is not rotating for STALL_TIME -> stop the motors instead of
+# grinding them. Cleared by a zero / opposite-sign angular command or cmd_vel
+# timeout.
+STALL_DUTY_FRACTION = 0.9    # |duty_ang| >= this * DUTY_LIMIT counts as saturated
+STALL_SPEED_FRACTION = 0.25  # measured below this fraction of target = not rotating
+STALL_MIN_TARGET = 0.1       # rad/s - ignore tiny angular targets
+STALL_TIME = 2.0             # seconds
+
 
 class SpeedPIController:
     """Feedforward + PI trim controller for one motion axis (linear or
@@ -169,10 +190,21 @@ class UgvDriver(Node):
         self.target_linear = 0.0
         self.target_angular = 0.0
         self.measured_linear = 0.0
-        self.measured_angular = 0.0
+        self.encoder_angular = 0.0
+        self.gyro_angular = 0.0
         self.last_cmd_vel_time = time.monotonic()
         self.last_motion_time = time.monotonic()
+        self.last_imu_time = 0.0
         self._last_control_time = time.monotonic()
+
+        self.use_gyro = self.declare_parameter('use_gyro_angular_feedback', True).value
+        self.stall_detection = self.declare_parameter('stall_detection', True).value
+        self._imu_sum = 0.0
+        self._imu_count = 0
+        self._gyro_active = False
+        self._sign_mismatch = 0
+        self._stall_since = None
+        self._stalled_sign = 0.0
 
         self.linear_ctrl = SpeedPIController(LINEAR_FF_SLOPE, LINEAR_FF_OFFSET, LINEAR_KP, LINEAR_KI)
         self.angular_ctrl = SpeedPIController(
@@ -187,6 +219,8 @@ class UgvDriver(Node):
 
         # Board speed telemetry, republished by ugv_bringup (sole serial reader)
         self.motion_sub_ = self.create_subscription(Twist, "motion_raw", self.motion_raw_callback, 10)
+
+        self.imu_sub_ = self.create_subscription(Imu, "imu/data_raw", self.imu_callback, 50)
 
         # Subscribe to joint states (ugv/joint_states topic)
         self.joint_states_sub = self.create_subscription(JointState, 'ugv/joint_states', self.joint_states_callback, 10)
@@ -212,8 +246,51 @@ class UgvDriver(Node):
 
     def motion_raw_callback(self, msg):
         self.measured_linear = msg.linear.x * LINEAR_TELEMETRY_CORRECTION
-        self.measured_angular = msg.angular.z * ANGULAR_TELEMETRY_CORRECTION
+        self.encoder_angular = msg.angular.z * ANGULAR_TELEMETRY_CORRECTION
         self.last_motion_time = time.monotonic()
+
+    # Averaged per control cycle (IMU ~25 Hz vs. 10 Hz loop) to damp vibration.
+    def imu_callback(self, msg):
+        self._imu_sum += msg.angular_velocity.z
+        self._imu_count += 1
+        self.last_imu_time = time.monotonic()
+
+    def angular_feedback(self, now, encoder_fresh):
+        if self._imu_count:
+            self.gyro_angular = self._imu_sum / self._imu_count
+            self._imu_sum = 0.0
+            self._imu_count = 0
+
+        gyro_fresh = self.use_gyro and now - self.last_imu_time <= IMU_FEEDBACK_TIMEOUT
+
+        if gyro_fresh and encoder_fresh:
+            if (abs(self.gyro_angular) > SIGN_CHECK_MIN_SPEED
+                    and abs(self.encoder_angular) > SIGN_CHECK_MIN_SPEED
+                    and self.gyro_angular * self.encoder_angular < 0.0):
+                self._sign_mismatch += 1
+            else:
+                self._sign_mismatch = 0
+            if self._sign_mismatch >= SIGN_CHECK_CYCLES:
+                self.use_gyro = False
+                gyro_fresh = False
+                self.angular_ctrl.reset()
+                self.get_logger().error(
+                    f"Gyro yaw rate ({self.gyro_angular:+.2f}) keeps opposing encoder "
+                    f"({self.encoder_angular:+.2f}) - gyro angular feedback DISABLED, "
+                    "using encoders. Check the IMU flip/sign in ugv_bringup."
+                )
+
+        if gyro_fresh != self._gyro_active:
+            self._gyro_active = gyro_fresh
+            self.angular_ctrl.reset()
+            if gyro_fresh:
+                self.get_logger().info("Angular feedback: gyro (imu/data_raw)")
+            elif self.use_gyro:
+                self.get_logger().warn("imu/data_raw stale - angular feedback: encoders")
+
+        if gyro_fresh:
+            return self.gyro_angular, True
+        return self.encoder_angular, encoder_fresh
 
     # Runs at CONTROL_PERIOD regardless of cmd_vel message rate: reads real
     # measured speed from get_motion_data(), runs the two feedforward+PI
@@ -241,16 +318,32 @@ class UgvDriver(Node):
                 throttle_duration_sec=5.0,
             )
 
+        measured_angular, angular_closed = self.angular_feedback(now, closed_loop)
+
+        if self._stalled_sign != 0.0:
+            if self.target_angular * self._stalled_sign > 0.0:
+                self.car.set_motor(0, 0, 0, 0)
+                return
+            self._stalled_sign = 0.0
+            self.get_logger().info("Stall cleared by new angular command - driving again")
+
         # Full stop: cut the motors outright instead of letting the PI trim
         # brake against the measured speed.
         if self.target_linear == 0.0 and self.target_angular == 0.0:
             self.linear_ctrl.reset()
             self.angular_ctrl.reset()
+            self._stall_since = None
             self.car.set_motor(0, 0, 0, 0)
             return
 
         duty_lin = self.linear_ctrl.update(self.target_linear, self.measured_linear, dt, closed_loop)
-        duty_ang = self.angular_ctrl.update(self.target_angular, self.measured_angular, dt, closed_loop)
+        duty_ang = self.angular_ctrl.update(self.target_angular, measured_angular, dt, angular_closed)
+
+        if self.stall_detection and self.detect_stall(now, duty_ang, measured_angular, angular_closed):
+            self.linear_ctrl.reset()
+            self.angular_ctrl.reset()
+            self.car.set_motor(0, 0, 0, 0)
+            return
 
         # m1=front-left, m2=rear-left, m3=front-right, m4=rear-right (see
         # app_fourwheel.c's Fourwheel_Ctrl). Forward needs NEGATIVE duty on
@@ -271,6 +364,34 @@ class UgvDriver(Node):
         right *= scale
 
         self.car.set_motor(int(round(left)), int(round(left)), int(round(right)), int(round(right)))
+
+    def detect_stall(self, now, duty_ang, measured_angular, angular_closed):
+        target = self.target_angular
+        sign = 1.0 if target > 0 else -1.0
+        stalled_now = (
+            angular_closed
+            and abs(target) >= STALL_MIN_TARGET
+            and abs(duty_ang) >= STALL_DUTY_FRACTION * DUTY_LIMIT
+            and measured_angular * sign < STALL_SPEED_FRACTION * abs(target)
+        )
+        if not stalled_now:
+            self._stall_since = None
+            return False
+        if self._stall_since is None:
+            self._stall_since = now
+            return False
+        if now - self._stall_since < STALL_TIME:
+            return False
+
+        self._stall_since = None
+        self._stalled_sign = sign
+        source = "gyro" if self._gyro_active else "encoder"
+        self.get_logger().error(
+            f"STALL: target {target:+.2f} rad/s, angular duty {duty_ang:+.0f}, "
+            f"measured ({source}) {measured_angular:+.2f} rad/s for {STALL_TIME:.0f}s - "
+            "motors stopped until a zero/opposite angular command or cmd_vel timeout."
+        )
+        return True
 
     # Callback for processing joint state updates
     def joint_states_callback(self, msg):

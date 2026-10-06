@@ -108,6 +108,18 @@ def generate_launch_description():
                     'straight calibration segment during navigation when none was found'
     )
 
+    use_gyro_angular_feedback_arg = DeclareLaunchArgument(
+        'use_gyro_angular_feedback',
+        default_value='true',
+        description='ugv_driver: close the turn-rate loop on the IMU gyro instead of the wheel encoders'
+    )
+
+    stall_detection_arg = DeclareLaunchArgument(
+        'stall_detection',
+        default_value='true',
+        description='ugv_driver: stop the motors when a commanded turn makes no rotation at full duty'
+    )
+
     # Sensors + IMU/UWB EKF localization (map->odom TF) + static map_server
     # (no AMCL - the map is only used here to feed the costmaps' static
     # layer, not for scan-matching localization). No LIDAR is started here.
@@ -123,6 +135,8 @@ def generate_launch_description():
             'map': LaunchConfiguration('map'),
             'use_map_server': 'true',
             'uwb_heading_correction': LaunchConfiguration('uwb_heading_correction'),
+            'use_gyro_angular_feedback': LaunchConfiguration('use_gyro_angular_feedback'),
+            'stall_detection': LaunchConfiguration('stall_detection'),
         }.items()
     )
 
@@ -135,6 +149,8 @@ def generate_launch_description():
         params_file_arg,
         autostart_arg,
         uwb_heading_correction_arg,
+        use_gyro_angular_feedback_arg,
+        stall_detection_arg,
         localization_launch,
         OpaqueFunction(function=launch_navigation),
     ])
