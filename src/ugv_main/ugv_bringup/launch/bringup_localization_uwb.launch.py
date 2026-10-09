@@ -208,9 +208,10 @@ def generate_launch_description():
         name='ekf_global_filter_node',
         output='screen',
         parameters=global_ekf_params + [{
+            # vy must stay fused (as in ekf_global.yaml), else UWB noise rotates the yaw.
             'odom0_config': [False, False, False,
                              False, False, False,
-                             True, False, False,
+                             True, True, False,
                              False, False, True,
                              False, False, False],
             'pose1': '/uwb/heading',
