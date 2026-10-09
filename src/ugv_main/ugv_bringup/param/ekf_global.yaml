@@ -35,9 +35,10 @@ ekf_global_filter_node:
         odom0: /odometry/local
         # vx fused so x/y are dead-reckoned between UWB fixes instead of being
         # dragged directly by each (noisy) UWB sample.
+        # vy=0 too: with vy free, UWB noise was absorbed by rotating yaw (drift while standing still).
         odom0_config: [false, false, false,
                        false, false, true,
-                       true,  false, false,
+                       true,  true,  false,
                        false, false, true,
                        false, false, false]
         odom0_queue_size: 10

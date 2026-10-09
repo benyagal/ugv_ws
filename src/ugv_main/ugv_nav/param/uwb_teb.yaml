@@ -194,7 +194,8 @@ local_costmap:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
         inflation_radius: 0.55
-      always_send_full_costmap: False
+      # True: if RViz drops the one latched full costmap (TF not ready yet), updates alone never show it.
+      always_send_full_costmap: True
 
 global_costmap:
   global_costmap:
@@ -215,7 +216,7 @@ global_costmap:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
         inflation_radius: 0.3
-      always_send_full_costmap: False
+      always_send_full_costmap: True
 
 planner_server:
   ros__parameters:
