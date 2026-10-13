@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections import deque
+import time
 
 import rclpy
 from rclpy.node import Node
@@ -20,8 +21,15 @@ from rclpy.node import Node
 from rcl_interfaces.msg import ParameterDescriptor, ParameterType
 from geometry_msgs.msg import PointStamped, TransformStamped
 
-import dwm1001
 import serial
+
+# The tag needs well over the dwm1001 lib's 0.1 s to reboot; shorter waits lose the
+# shell-entry keystrokes and leave the tag silently in TLV mode.
+RESET_BOOT_DELAY_S = 2.0
+SHELL_STARTUP_DELAY_S = 1.0
+SHELL_COMMAND_DELAY_S = 0.5
+NO_DATA_TIMEOUT_S = 3.0
+MAX_RX_BUFFER_BYTES = 1024
 
 
 class ActiveTagNode(Node):
@@ -40,11 +48,9 @@ class ActiveTagNode(Node):
         serial_port_param = self.get_parameter("serial_port").value
         self.get_logger().info(f"Provided serial port: '{serial_port_param}'")
 
-        serial_handle = self._open_serial_port(serial_port_param)
-        self.dwm_handle = dwm1001.ActiveTag(serial_handle)
-
-        self.dwm_handle.start_position_reporting()
-        self.get_logger().info("Started position reporting.")
+        self._serial = self._open_serial_port(serial_port_param)
+        self._rx_buffer = b""
+        self._start_position_reporting()
 
         tag_topic = f"~/output/{self.get_parameter('tag_id').value}"
         self.point_publisher = self.create_publisher(PointStamped, tag_topic, 1)
@@ -56,13 +62,54 @@ class ActiveTagNode(Node):
             self._shutdown_fatal("No serial port specified.")
 
         try:
-            serial_handle = serial.Serial(serial_port, baudrate=115_200)
+            serial_handle = serial.Serial(serial_port, baudrate=115_200, timeout=0.2)
         except serial.SerialException:
             self._shutdown_fatal(f"Could not open serial port '{serial_port}'.")
 
         self.get_logger().info(f"Opened serial port: '{serial_port}'.")
 
         return serial_handle
+
+    def _send(self, data: bytes, delay_s: float) -> None:
+        self._serial.write(data)
+        self._serial.flush()
+        time.sleep(delay_s)
+
+    def _start_position_reporting(self) -> None:
+        """Bring the tag from any state (TLV, idle shell, running lep) to shell + lep."""
+        try:
+            self._send(b"reset\r", RESET_BOOT_DELAY_S)
+            self._send(b"\r\r", SHELL_STARTUP_DELAY_S)
+            self._serial.reset_input_buffer()
+            self._send(b"lep\r", SHELL_COMMAND_DELAY_S)
+            # First line after lep has the shell prompt mixed in.
+            self._serial.reset_input_buffer()
+        except serial.SerialException as e:
+            self.get_logger().error(f"Serial error while starting position reporting: {e}")
+        self._rx_buffer = b""
+        self._last_report_time = time.monotonic()
+        self.get_logger().info("Started position reporting.")
+
+    def stop_position_reporting(self) -> None:
+        """Stop lep and return to TLV mode so the next start begins from a known state."""
+        try:
+            self._send(b"\r", SHELL_COMMAND_DELAY_S)
+            self._send(b"quit\r", SHELL_COMMAND_DELAY_S)
+            self._serial.close()
+        except serial.SerialException:
+            pass
+
+    def _parse_position(self, line: bytes):
+        fields = line.decode(errors="ignore").strip().split(",")
+        if fields[0] != "POS":
+            return None
+        try:
+            if len(fields) != 5:
+                raise ValueError(f"unexpected length {len(fields)}")
+            return float(fields[1]), float(fields[2]), float(fields[3])
+        except ValueError as e:
+            self.get_logger().warn(f"Could not parse position report ({e}). Skipping it.")
+            return None
 
     def _shutdown_fatal(self, message: str) -> None:
         self.get_logger().fatal(message + " Shutting down.")
@@ -94,15 +141,29 @@ class ActiveTagNode(Node):
 
     def timer_callback(self):
         try:
-            tag_position = self.dwm_handle.position
-        except dwm1001.ParsingError:
-            self.get_logger().warn("Could not parse position report. Skipping it.")
-            return
+            waiting = self._serial.in_waiting
+            if waiting:
+                self._rx_buffer += self._serial.read(waiting)
         except serial.SerialException as e:
             self.get_logger().warn(f"Transient serial read error, skipping this cycle: {e}")
-            return
 
-        self._position_buffer.append((tag_position.x_m, tag_position.y_m, tag_position.z_m))
+        *lines, self._rx_buffer = self._rx_buffer.split(b"\n")
+        if len(self._rx_buffer) > MAX_RX_BUFFER_BYTES:
+            self._rx_buffer = b""
+
+        for line in lines:
+            position = self._parse_position(line)
+            if position is not None:
+                self._last_report_time = time.monotonic()
+                self._handle_position(position)
+
+        if time.monotonic() - self._last_report_time > NO_DATA_TIMEOUT_S:
+            self.get_logger().warn(
+                f"No POS reports for {NO_DATA_TIMEOUT_S:.0f} s, reinitializing tag.")
+            self._start_position_reporting()
+
+    def _handle_position(self, position):
+        self._position_buffer.append(position)
 
         # Nothing reported until the position buffer is filled. Then a moving average is computed.
         if len(self._position_buffer) == self._position_buffer.maxlen:
@@ -129,10 +190,15 @@ def main(args=None):
     rclpy.init(args=args)
 
     active_tag = ActiveTagNode()
-    rclpy.spin(active_tag)
-
-    active_tag.destroy_node()
-    rclpy.shutdown()
+    try:
+        rclpy.spin(active_tag)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        active_tag.stop_position_reporting()
+        active_tag.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":
