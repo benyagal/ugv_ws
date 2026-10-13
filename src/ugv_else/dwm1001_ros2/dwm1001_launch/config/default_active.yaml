@@ -1,0 +1,5 @@
+dwm_active:
+  ros__parameters:
+    serial_port: "/dev/ttyACM0"
+    tag_id: "CHANGEME"
+    samples: 3

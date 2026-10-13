@@ -1,3 +1,0 @@
-[submodule "src/ugv_else/dwm1001_ros2"]
-	path = src/ugv_else/dwm1001_ros2
-	url = https://github.com/the-hive-lab/dwm1001_ros2.git

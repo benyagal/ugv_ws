@@ -1,0 +1,5 @@
+dwm_passive:
+  ros__parameters:
+    serial_port: "/dev/ttyACM0"
+    ignore_tags: ""
+    num_samples: 3
