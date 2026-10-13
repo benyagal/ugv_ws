@@ -287,7 +287,8 @@ def generate_launch_description():
         # settle (previous quick reading was inaccurate), and a 4th point
         # was added for extra robustness.
         # x, y, z, yaw, pitch, roll, parent_frame, child_frame
-        arguments=['0.834', '-1.207', '0', '1.739', '0', '0', 'map', 'dwm1001'],
+        #arguments=['0.834', '-1.207', '0', '1.739', '0', '0', 'map', 'dwm1001'],- szilardnal
+	arguments=['24.000', '0.160', '0', '0', '0', '0', 'map', 'dwm1001'],
         output='screen',
     )
 

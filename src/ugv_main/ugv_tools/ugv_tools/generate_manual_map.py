@@ -19,8 +19,8 @@ from PIL import Image
 #   +Y a vegfal menten a SZEMKOZTI hosszanti fal fele.
 # Az origo sarokban allva, +X fele nezve az epulet belseje BALRA van
 # (kulonben tukrozott lenne a terkep).
-BUILDING_WIDTH_M = 12.9
-BUILDING_LENGTH_M = 100.9
+BUILDING_WIDTH_M = 12.0
+BUILDING_LENGTH_M = 100.0
 
 # ============================================================
 # 2) TERKEP FELBONTAS
@@ -41,19 +41,19 @@ RESOLUTION_M_PER_PX = 0.05
 #   tav_hosszfaltol_m: merolegesen a sarok HOSSZANTI FALATOL (Y irany)
 #   magassag_m:        a padlotol (a DWM1001 konfiguraciohoz kell)
 # Az ORIGIN_ANCHOR_NAME anchor lesz a DWM1001 rendszer (0,0) pontja.
-ANCHORS = []  # pl. [("A0", "origo", 0.30, 0.20, 2.5), ("A1", "szemkozti", 0.30, 0.20, 2.5)]
+ANCHORS = [("A0", "origo", 24.0, 0.16, 2.65), ("A1", "szemkozti", 24.0, 0.20, 2.65), ("A2", "tavoli_veg", 28.0, 0.17, 2.6), ("A3", "atlos", 28.0, 0.42, 2.6)]
 ORIGIN_ANCHOR_NAME = "A0"
 
 # ============================================================
 # 4) VEGFALAK MENTI DOLGOZOI FOLYOSO (MERD LE, ket vegen kulon)
 # ============================================================
 # vegfal -> folyoso -> kerites -> csirketerulet
-END_WALKWAY_DEPTH_NEAR_M = 1.5  # origo feloli vegfal (X=0) -> kerites
-END_WALKWAY_DEPTH_FAR_M = 1.5   # tavoli vegfal (X=hossz) -> kerites
+END_WALKWAY_DEPTH_NEAR_M = 2.8  # origo feloli vegfal (X=0) -> kerites
+END_WALKWAY_DEPTH_FAR_M = 0.0   # tavoli vegfal (X=hossz) -> kerites
 SIDE_FENCE_THICKNESS_M = 0.1  # a kerites akadalykent rajzolt vastagsaga
 # res a kerites es a sorok vege kozott, itt kel at a robot sorrol sorra
-ROW_END_CLEARANCE_NEAR_M = 1.0
-ROW_END_CLEARANCE_FAR_M = 1.0
+ROW_END_CLEARANCE_NEAR_M = 0.0
+ROW_END_CLEARANCE_FAR_M = 3.0
 
 # ============================================================
 # 5) SOROK (itato/etetu, valtakozva, itatoval kezdve es vegzodve)
@@ -61,15 +61,15 @@ ROW_END_CLEARANCE_FAR_M = 1.0
 # Sorrend Y=0-tol (origo feloli hosszanti fal) a szemkozti fal fele.
 ROW_PATTERN = ["itato", "etetu", "itato", "etetu", "itato", "etetu", "itato"]
 
-DRINKER_LINE_THICKNESS_M = 0.125   # 10-15 cm kozepe
-FEEDER_LINE_THICKNESS_M = 0.05
+DRINKER_LINE_THICKNESS_M = 0.18   # 10-15 cm kozepe
+FEEDER_LINE_THICKNESS_M = 0.10
 FEEDER_BULGE_DIAMETER_M = 0.30
-FEEDER_FIRST_OFFSET_M = 0.0   # sor eleje (origo feloli vege) -> elso etetu KOZEPE (MERD LE)
-FEEDER_BULGE_SPACING_M = 1.0  # etetok kozott, kozeptol kozepig (MERD LE)
+FEEDER_FIRST_OFFSET_M = 0.52   # sor eleje (origo feloli vege) -> elso etetu KOZEPE (MERD LE)
+FEEDER_BULGE_SPACING_M = 0.76  # etetok kozott, kozeptol kozepig (MERD LE)
 
 # Y=0 fal -> 1., 2., ... sor KOZEPVONALA, ROW_PATTERN sorrendjeben (MERD LE).
 # None eseten egyenletes elosztas.
-ROW_Y_POSITIONS_M = None  # pl. [1.1, 3.2, 5.3, 7.4, 9.6, 10.8, 11.4]
+ROW_Y_POSITIONS_M = [. , . , . , . , . , . , .]  # pl. [1.1, 3.2, 5.3, 7.4, 9.6, 10.8, 11.4]
 
 # ============================================================
 # 5) KIMENET
