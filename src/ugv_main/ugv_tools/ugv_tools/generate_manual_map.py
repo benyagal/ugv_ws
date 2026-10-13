@@ -48,7 +48,10 @@ ORIGIN_ANCHOR_NAME = "A0"
 # 4) VEGFALAK MENTI DOLGOZOI FOLYOSO (MERD LE, ket vegen kulon)
 # ============================================================
 # vegfal -> folyoso -> kerites -> csirketerulet
-END_WALKWAY_DEPTH_NEAR_M = 2.8  # origo feloli vegfal (X=0) -> kerites
+# origo feloli kerites torespontjai (X = tav a vegfaltol, Y = tav az origo feloli hosszfaltol):
+# a szemkozti faltol 6 m hosszan 1 m-en, majd 2 m-es ferde szakasz (60 fok), majd 1+1.732 m-en az Y=0 falig
+NEAR_FENCE_POINTS_M = [(1.0, BUILDING_WIDTH_M), (1.0, BUILDING_WIDTH_M - 6.0),
+                       (1.0 + 1.732, BUILDING_WIDTH_M - 7.0), (1.0 + 1.732, 0.0)]
 END_WALKWAY_DEPTH_FAR_M = 0.0   # tavoli vegfal (X=hossz) -> kerites
 SIDE_FENCE_THICKNESS_M = 0.1  # a kerites akadalykent rajzolt vastagsaga
 # res a kerites es a sorok vege kozott, itt kel at a robot sorrol sorra
@@ -63,13 +66,15 @@ ROW_PATTERN = ["itato", "etetu", "itato", "etetu", "itato", "etetu", "itato"]
 
 DRINKER_LINE_THICKNESS_M = 0.18   # 10-15 cm kozepe
 FEEDER_LINE_THICKNESS_M = 0.10
-FEEDER_BULGE_DIAMETER_M = 0.30
+# ovalis etetok, a hosszabbik tengely meroleges a sor iranyara (Y iranyu)
+FEEDER_SIZE_ACROSS_ROW_M = 0.47
+FEEDER_SIZE_ALONG_ROW_M = 0.27
 FEEDER_FIRST_OFFSET_M = 0.52   # sor eleje (origo feloli vege) -> elso etetu KOZEPE (MERD LE)
 FEEDER_BULGE_SPACING_M = 0.76  # etetok kozott, kozeptol kozepig (MERD LE)
 
 # Y=0 fal -> 1., 2., ... sor KOZEPVONALA, ROW_PATTERN sorrendjeben (MERD LE).
 # None eseten egyenletes elosztas.
-ROW_Y_POSITIONS_M = [. , . , . , . , . , . , .]  # pl. [1.1, 3.2, 5.3, 7.4, 9.6, 10.8, 11.4]
+ROW_Y_POSITIONS_M = [1.4 , 3.0 , 4.45 , 6.02 , 7.69 , 9.23 , 10.7]  # pl. [1.1, 3.2, 5.3, 7.4, 9.6, 10.8, 11.4]
 
 # ============================================================
 # 5) KIMENET
@@ -109,7 +114,8 @@ def compute_row_y_positions():
 
 
 def fence_x_positions():
-    return END_WALKWAY_DEPTH_NEAR_M, BUILDING_LENGTH_M - END_WALKWAY_DEPTH_FAR_M
+    """(origo feloli kerites legtavolabbi X-e, tavoli kerites X-e); a sorok ezek kozott vannak."""
+    return max(x for x, _ in NEAR_FENCE_POINTS_M), BUILDING_LENGTH_M - END_WALKWAY_DEPTH_FAR_M
 
 
 def row_x_range():
@@ -173,14 +179,24 @@ def build_grid():
         r1, r2 = sorted((px_y(y1_m), px_y(y2_m)))
         grid[max(r1, 0):min(r2 + 1, h_px), max(c1, 0):min(c2 + 1, w_px)] = OCCUPIED
 
-    def circle(cx_m, cy_m, diameter_m):
-        radius_px = diameter_m / 2.0 / RESOLUTION_M_PER_PX
+    def ellipse(cx_m, cy_m, size_x_m, size_y_m):
+        rx_px = size_x_m / 2.0 / RESOLUTION_M_PER_PX
+        ry_px = size_y_m / 2.0 / RESOLUTION_M_PER_PX
         cx_px, cy_px = px_x(cx_m), px_y(cy_m)
-        r0, r1 = int(cy_px - radius_px), int(cy_px + radius_px) + 1
-        c0, c1 = int(cx_px - radius_px), int(cx_px + radius_px) + 1
+        r0, r1 = int(cy_px - ry_px), int(cy_px + ry_px) + 1
+        c0, c1 = int(cx_px - rx_px), int(cx_px + rx_px) + 1
         rows, cols = np.ogrid[max(r0, 0):min(r1, h_px), max(c0, 0):min(c1, w_px)]
-        mask = (rows - cy_px) ** 2 + (cols - cx_px) ** 2 <= radius_px ** 2
+        mask = ((rows - cy_px) / ry_px) ** 2 + ((cols - cx_px) / rx_px) ** 2 <= 1.0
         grid[max(r0, 0):min(r1, h_px), max(c0, 0):min(c1, w_px)][mask] = OCCUPIED
+
+    def polyline(points_m, thickness_m):
+        # tomor negyzetekkel, hogy a ferde szakaszon ne legyen atlos res
+        half_t = thickness_m / 2.0
+        for (x0, y0), (x1, y1) in zip(points_m, points_m[1:]):
+            n = int(np.hypot(x1 - x0, y1 - y0) / (RESOLUTION_M_PER_PX / 2.0)) + 1
+            for t in np.linspace(0.0, 1.0, n + 1):
+                x, y = x0 + t * (x1 - x0), y0 + t * (y1 - y0)
+                rect(x - half_t, y - half_t, x + half_t, y + half_t)
 
     # kulso falak
     rect(0, 0, BUILDING_LENGTH_M, SIDE_FENCE_THICKNESS_M)
@@ -189,8 +205,8 @@ def build_grid():
     rect(BUILDING_LENGTH_M - SIDE_FENCE_THICKNESS_M, 0, BUILDING_LENGTH_M, BUILDING_WIDTH_M)
 
     # dolgozoi folyoso es csirketerulet kozotti keritesek (az epulet ket vegen)
-    fence_near_x, fence_far_x = fence_x_positions()
-    rect(fence_near_x, 0, fence_near_x + SIDE_FENCE_THICKNESS_M, BUILDING_WIDTH_M)
+    _, fence_far_x = fence_x_positions()
+    polyline(NEAR_FENCE_POINTS_M, SIDE_FENCE_THICKNESS_M)
     rect(fence_far_x - SIDE_FENCE_THICKNESS_M, 0, fence_far_x, BUILDING_WIDTH_M)
 
     row_y_positions = compute_row_y_positions()
@@ -205,7 +221,7 @@ def build_grid():
             half_t = FEEDER_LINE_THICKNESS_M / 2.0
             rect(row_x_start, y_m - half_t, row_x_end, y_m + half_t)
             for x in feeder_x_positions():
-                circle(x, y_m, FEEDER_BULGE_DIAMETER_M)
+                ellipse(x, y_m, FEEDER_SIZE_ALONG_ROW_M, FEEDER_SIZE_ACROSS_ROW_M)
         else:
             raise ValueError(f"Ismeretlen sor tipus: {row_type}")
 

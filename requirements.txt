@@ -5,3 +5,4 @@ requests
 smbus2
 Jetson.GPIO
 adafruit-blinka
+Pillow

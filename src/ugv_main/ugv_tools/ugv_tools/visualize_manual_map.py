@@ -76,8 +76,8 @@ def render():
 
     # vegfali dolgozoi folyoso keritesek
     fence_near_x, fence_far_x = gm.fence_x_positions()
-    for fx in (fence_near_x, fence_far_x):
-        draw.line([P(fx, 0), P(fx, gm.BUILDING_WIDTH_M)], fill=FENCE_COLOR, width=3)
+    draw.line([P(x, y) for x, y in gm.NEAR_FENCE_POINTS_M], fill=FENCE_COLOR, width=3, joint="curve")
+    draw.line([P(fence_far_x, 0), P(fence_far_x, gm.BUILDING_WIDTH_M)], fill=FENCE_COLOR, width=3)
 
     # sorok (a kerites es a sorok vege kozotti res: ROW_END_CLEARANCE_*, itt kel at a robot)
     row_x_start, row_x_end = gm.row_x_range()
@@ -86,10 +86,11 @@ def render():
         color = DRINKER_COLOR if row_type == "itato" else FEEDER_COLOR
         draw.line([P(row_x_start, y_m), P(row_x_end, y_m)], fill=color, width=2)
         if row_type == "etetu":
-            r_px = gm.FEEDER_BULGE_DIAMETER_M / 2.0 / gm.RESOLUTION_M_PER_PX * SCALE
+            rx_px = gm.FEEDER_SIZE_ALONG_ROW_M / 2.0 / gm.RESOLUTION_M_PER_PX * SCALE
+            ry_px = gm.FEEDER_SIZE_ACROSS_ROW_M / 2.0 / gm.RESOLUTION_M_PER_PX * SCALE
             for x in gm.feeder_x_positions():
                 cx, cy = P(x, y_m)
-                draw.ellipse([cx - r_px, cy - r_px, cx + r_px, cy + r_px], outline=FEEDER_COLOR, width=2)
+                draw.ellipse([cx - rx_px, cy - ry_px, cx + rx_px, cy + ry_px], outline=FEEDER_COLOR, width=2)
 
     # UWB anchorok (csak a diagramon, a pgm-ben nem akadalyok)
     for name, (ax, ay, _) in gm.anchor_building_positions().items():
@@ -117,10 +118,12 @@ def render():
     y0, y1 = P(0, 0)[1], P(0, gm.BUILDING_WIDTH_M)[1]
     draw_dimension(draw, x_dim, y0, x_dim, y1, f"{gm.BUILDING_WIDTH_M} m (szelesseg)", font)
 
-    # vegfali folyoso melysege (mindket vegen kulon)
-    y_dim2 = P(0, 0)[1] + 70
-    draw_dimension(draw, P(0, 0)[0], y_dim2, P(fence_near_x, 0)[0], y_dim2,
-                   f"{gm.END_WALKWAY_DEPTH_NEAR_M} m", font_small)
+    # vegfali folyoso melysege (mindket vegen kulon; origo felol a kerites ket egyenes szakaszahoz)
+    y_dim2 = P(0, 0)[1] + 62
+    near_depths = sorted({x for x, _ in gm.NEAR_FENCE_POINTS_M})
+    for i, depth in enumerate(near_depths):
+        y_d = y_dim2 + 22 * i
+        draw_dimension(draw, P(0, 0)[0], y_d, P(depth, 0)[0], y_d, f"{depth:.3g} m", font_small)
     draw_dimension(draw, P(fence_far_x, 0)[0], y_dim2, P(gm.BUILDING_LENGTH_M, 0)[0], y_dim2,
                    f"{gm.END_WALKWAY_DEPTH_FAR_M} m", font_small)
 
@@ -144,8 +147,10 @@ def render():
     for row_type, y_m in zip(gm.ROW_PATTERN, row_y_positions):
         if row_type == "etetu":
             cx, cy = P(row_x_start, y_m)
-            r_px = gm.FEEDER_BULGE_DIAMETER_M / 2.0 / gm.RESOLUTION_M_PER_PX * SCALE
-            draw.text((cx + r_px + 6, cy - 8), f"o{gm.FEEDER_BULGE_DIAMETER_M * 100:.0f} cm", fill=FEEDER_COLOR, font=font_small)
+            rx_px = gm.FEEDER_SIZE_ALONG_ROW_M / 2.0 / gm.RESOLUTION_M_PER_PX * SCALE
+            draw.text((cx + rx_px + 6, cy - 8),
+                      f"{gm.FEEDER_SIZE_ALONG_ROW_M * 100:.0f}x{gm.FEEDER_SIZE_ACROSS_ROW_M * 100:.0f} cm",
+                      fill=FEEDER_COLOR, font=font_small)
             break
 
     # itato vastagsag (elso itato sor elejere irva)
