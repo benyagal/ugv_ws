@@ -43,6 +43,8 @@ setup(
             'gripper_repl = ugv_tools.gripper_repl:main',
             'diagnose_yaw_pipeline = ugv_tools.diagnose_yaw_pipeline:main',
             'fake_chickens = ugv_tools.fake_chickens:main',
+            'fake_dead_chickens = ugv_tools.fake_dead_chickens:main',
+            'gripper_server = ugv_tools.gripper_server:main',
         ],
     },
 )

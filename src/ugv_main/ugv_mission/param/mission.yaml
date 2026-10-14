@@ -1,0 +1,23 @@
+# Mission planner parameters (ros2 launch ugv_mission mission.launch.py)
+mission_planner:
+  ros__parameters:
+    global_frame: map
+    robot_base_frame: base_footprint
+    detections_topic: /dead_chicken/detections
+    costmap_topic: /global_costmap/costmap
+    gripper_action: /gripper
+
+    dedupe_radius: 0.5        # m, repeated reports closer than this = same chicken
+    approach_distance: 1.0    # m, Nav2 goal distance from the chicken, facing it
+    approach_clearance: 0.2   # m, radius around the approach pose that must be free in the global costmap
+    nav_attempts: 2           # approach directions tried before the chicken is marked failed
+    chicken_timeout: 300.0    # s, navigation time limit per chicken (also per unload / dock trip)
+    gripper_timeout: 60.0     # s, per gripper command (pickup ~17 s, empty ~38 s)
+
+    storage_capacity: 3       # pickups before the storage is emptied (PUSHPULL)
+
+    # [x, y, yaw_deg] in the map frame. Not set = unused (see mission_planner.py).
+    # unload_pose: [0.0, 0.0, 0.0]
+    # predock_pose: [0.0, 0.0, 0.0]
+
+    dock_voltage: 0.0         # V, go home below this (held 10 s); 0 = disabled until the battery is known
