@@ -108,6 +108,10 @@ STALL_SPEED_FRACTION = 0.25  # measured below this fraction of target = not rota
 STALL_MIN_TARGET = 0.1       # rad/s - ignore tiny angular targets
 STALL_TIME = 2.0             # seconds
 
+LOW_BATTERY_VOLTAGE = 9.0
+LOW_BATTERY_WARN_INTERVAL = 30.0  # seconds
+LOW_BATTERY_SOUND = '/home/ws/ugv_ws/src/ugv_main/ugv_bringup/ugv_bringup/low_battery.wav'
+
 
 class SpeedPIController:
     """Feedforward + PI trim controller for one motion axis (linear or
@@ -205,6 +209,7 @@ class UgvDriver(Node):
         self._sign_mismatch = 0
         self._stall_since = None
         self._stalled_sign = 0.0
+        self._last_battery_warn = -LOW_BATTERY_WARN_INTERVAL
 
         self.linear_ctrl = SpeedPIController(LINEAR_FF_SLOPE, LINEAR_FF_OFFSET, LINEAR_KP, LINEAR_KI)
         self.angular_ctrl = SpeedPIController(
@@ -414,14 +419,21 @@ class UgvDriver(Node):
             )
             self._warned_led_ctrl = True
 
-    # Callback for processing voltage data
+    # Must never block: this runs on the same thread as control_loop().
     def voltage_callback(self, msg):
         voltage_value = msg.data
-
-        # If voltage drops below a threshold, play a low battery warning sound
-        if 0.1 < voltage_value < 9: 
-            subprocess.run(['aplay', '-D', 'plughw:3,0', '/home/ws/ugv_ws/src/ugv_main/ugv_bringup/ugv_bringup/low_battery.wav'])
-            time.sleep(5)
+        now = time.monotonic()
+        if not 0.1 < voltage_value < LOW_BATTERY_VOLTAGE:
+            return
+        if now - self._last_battery_warn < LOW_BATTERY_WARN_INTERVAL:
+            return
+        self._last_battery_warn = now
+        self.get_logger().warn(f"Low battery: {voltage_value:.2f} V")
+        try:
+            subprocess.Popen(['aplay', '-D', 'plughw:3,0', LOW_BATTERY_SOUND],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError as e:
+            self.get_logger().warn(f"Low battery sound failed: {e}")
 
 def main(args=None):
     rclpy.init(args=args)
