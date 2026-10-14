@@ -42,6 +42,7 @@ setup(
             'test_switch_pin = ugv_tools.test_switch_pin:main',
             'gripper_repl = ugv_tools.gripper_repl:main',
             'diagnose_yaw_pipeline = ugv_tools.diagnose_yaw_pipeline:main',
+            'fake_chickens = ugv_tools.fake_chickens:main',
         ],
     },
 )

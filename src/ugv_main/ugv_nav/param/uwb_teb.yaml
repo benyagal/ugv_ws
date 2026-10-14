@@ -6,11 +6,12 @@
 # already (map_server is launched there purely to feed the costmaps' static
 # layer below - not for scan-matching localization).
 #
-# No live obstacle sensor yet (no LIDAR in production, camera-based chicken
-# detection not implemented yet) - both costmaps only carry a static_layer
-# (for wall-awareness from the pre-built map) + inflation_layer. Adding
-# camera obstacles later should just mean adding a new layer to the
-# "plugins" lists below, not rewriting this file.
+# No LIDAR in production. Live chickens come from the overhead camera system
+# (geometry_msgs/PoseArray on /overhead/chickens) via chicken_layer
+# (ugv_costmap_layers); without that topic the layer is simply empty.
+# Chickens are in the LOCAL costmap only and are not inflated (listed after
+# inflation_layer). The global costmap is static-only: with a dense flock a
+# chicken-aware global plan would almost never exist.
 #
 # Frames used throughout: odom_frame=odom, base_link_frame=base_footprint,
 # map_frame=map - matching ekf_local.yaml / ekf_global.yaml exactly (the
@@ -186,7 +187,7 @@ local_costmap:
       height: 5
       resolution: 0.05
       robot_radius: 0.1
-      plugins: ["static_layer", "inflation_layer"]
+      plugins: ["static_layer", "inflation_layer", "chicken_layer"]
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
         map_subscribe_transient_local: True
@@ -194,6 +195,14 @@ local_costmap:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
         inflation_radius: 0.55
+      chicken_layer:
+        plugin: "ugv_costmap_layers::ChickenLayer"
+        topic: /overhead/chickens
+        radius: 0.15
+        cost: 254
+        max_range: 2.5
+        min_range: 0.2
+        timeout: 1.0
       # True: if RViz drops the one latched full costmap (TF not ready yet), updates alone never show it.
       always_send_full_costmap: True
 
