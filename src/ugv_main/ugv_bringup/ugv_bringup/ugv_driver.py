@@ -67,6 +67,10 @@ ANGULAR_FF_OFFSET = 29.9  # duty needed to overcome stiction/deadband
 ANGULAR_BREAKAWAY_BOOST = 8.1    # duty
 ANGULAR_BREAKAWAY_SPEED = 0.05   # rad/s - below this the axis counts as stalled
 
+# Offset + boost are in-place stiction fixes; with wheels already rolling they gave
+# ~3x the commanded yaw rate (farm bag 2026-10-27: zig-zag), so fade them out.
+ANGULAR_FF_OFFSET_FADE_SPEED = 0.1  # m/s - linear speed at which they reach zero
+
 # NOTE (2026-09-22): during an in-place turn only the forward-commanded side
 # spins; the backward-commanded side stays put and the chassis pivots around
 # it. Two attempts at a per-side "reverse breakaway" duty kick (first gated on
@@ -135,7 +139,7 @@ class SpeedPIController:
     def reset(self):
         self.integral = 0.0
 
-    def update(self, target, measured, dt, closed_loop=True):
+    def update(self, target, measured, dt, closed_loop=True, offset_scale=1.0, limit=DUTY_LIMIT):
         if not closed_loop:
             # Pure feedforward: it is a fit of real measured hardware data, so
             # the robot still tracks the commanded speed reasonably well - it
@@ -153,7 +157,7 @@ class SpeedPIController:
             feedforward = 0.0
         else:
             sign = 1.0 if target > 0 else -1.0
-            feedforward = sign * (self.ff_slope * abs(target) + self.ff_offset)
+            feedforward = sign * (self.ff_slope * abs(target) + self.ff_offset * offset_scale)
             if self.breakaway_speed > 0.0 and abs(measured) < self.breakaway_speed:
                 # Faded out linearly rather than switched off at the
                 # threshold: a hard step made the axis creep just past
@@ -161,7 +165,7 @@ class SpeedPIController:
                 # on - a stall/kick limit cycle that feels weak and never
                 # completes a turn.
                 stall = 1.0 - abs(measured) / self.breakaway_speed
-                feedforward += sign * self.breakaway_boost * stall
+                feedforward += sign * self.breakaway_boost * stall * offset_scale
 
         error = target - measured
         proposed_integral = self.integral + error * dt
@@ -169,9 +173,9 @@ class SpeedPIController:
 
         # Anti-windup: only keep the integral update if it doesn't push the
         # output past the duty limit (clamped conditional integration).
-        if -DUTY_LIMIT <= output <= DUTY_LIMIT:
+        if -limit <= output <= limit:
             self.integral = proposed_integral
-        return max(-DUTY_LIMIT, min(DUTY_LIMIT, output))
+        return max(-limit, min(limit, output))
 
 
 class UgvDriver(Node):
@@ -341,8 +345,18 @@ class UgvDriver(Node):
             self.car.set_motor(0, 0, 0, 0)
             return
 
-        duty_lin = self.linear_ctrl.update(self.target_linear, self.measured_linear, dt, closed_loop)
-        duty_ang = self.angular_ctrl.update(self.target_angular, measured_angular, dt, angular_closed)
+        # min(): a blocked robot with a forward command still needs the stiction offset.
+        lin_speed = abs(self.target_linear)
+        if closed_loop:
+            lin_speed = min(lin_speed, abs(self.measured_linear))
+        offset_scale = max(0.0, 1.0 - lin_speed / ANGULAR_FF_OFFSET_FADE_SPEED)
+
+        duty_ang = self.angular_ctrl.update(
+            self.target_angular, measured_angular, dt, angular_closed, offset_scale)
+        # Angular first: a wound-up linear duty used to starve one side (pivot on one track).
+        duty_lin = self.linear_ctrl.update(
+            self.target_linear, self.measured_linear, dt, closed_loop,
+            limit=DUTY_LIMIT - abs(duty_ang))
 
         if self.stall_detection and self.detect_stall(now, duty_ang, measured_angular, angular_closed):
             self.linear_ctrl.reset()
@@ -360,13 +374,6 @@ class UgvDriver(Node):
         # ends up reversed vs. cmd_vel intent, same as the linear note above).
         left = -duty_lin + duty_ang
         right = -duty_lin - duty_ang
-
-        # Scale both sides down together (preserving the turn ratio) if
-        # their sum would exceed the duty limit.
-        max_mag = max(abs(left), abs(right), DUTY_LIMIT)
-        scale = DUTY_LIMIT / max_mag
-        left *= scale
-        right *= scale
 
         self.car.set_motor(int(round(left)), int(round(left)), int(round(right)), int(round(right)))
 
