@@ -17,7 +17,34 @@ mission_planner:
     storage_capacity: 3       # pickups before the storage is emptied (PUSHPULL)
 
     # [x, y, yaw_deg] in the map frame. Not set = unused (see mission_planner.py).
+    # predock_pose: dock_server.dock_distance in front of the charger contacts, facing the charger.
     # unload_pose: [0.0, 0.0, 0.0]
     # predock_pose: [0.0, 0.0, 0.0]
 
+    dock_action: /dock        # "" = stop at predock_pose without docking
+    dock_timeout: 180.0       # s, per dock / undock call
+
     dock_voltage: 0.0         # V, go home below this (held 10 s); 0 = disabled until the battery is known
+
+# Docking onto the charger (ros2 run ugv_mission dock_server), see dock_server.py.
+dock_server:
+  ros__parameters:
+    odom_frame: odom
+    robot_base_frame: base_footprint
+    dock_distance: 1.5        # m, predock_pose -> charger contacts
+    max_overshoot: 0.25       # m, travel beyond dock_distance before the attempt fails
+    fast_speed: 0.15          # m/s (slowest reliable speed on litter, plan 2.2)
+    slow_speed: 0.10          # m/s, last slow_distance (may stall on litter)
+    slow_distance: 0.5        # m
+    heading_gain: 1.0         # rad/s per rad, heading hold before the slow zone only
+    max_heading_rate: 0.3     # rad/s
+    baseline_time: 2.0        # s, standing still before the drive, resting voltage
+    charge_rise: 0.3          # V above the resting voltage = charging (MEASURE with the real charger)
+    charge_hold: 0.5          # s, rise must last this long while driving
+    confirm_time: 3.0         # s, standing check after stopping
+    stuck_time: 3.0           # s without 2 cm progress = stuck
+    retreat_distance: 0.5     # m, back-off before a retry
+    attempts: 3
+    undock_distance: 0.6      # m, straight back off the charger
+    undock_speed: 0.15        # m/s
+    timeout: 120.0            # s, whole dock / undock

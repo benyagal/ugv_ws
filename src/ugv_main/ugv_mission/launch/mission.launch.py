@@ -20,4 +20,11 @@ def generate_launch_description():
             output='screen',
             parameters=[params],
         ),
+        Node(
+            package='ugv_mission',
+            executable='dock_server',
+            name='dock_server',
+            output='screen',
+            parameters=[params],
+        ),
     ])

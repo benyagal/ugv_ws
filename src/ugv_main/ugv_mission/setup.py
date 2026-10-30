@@ -24,6 +24,7 @@ setup(
     entry_points={
         'console_scripts': [
             'mission_planner = ugv_mission.mission_planner:main',
+            'dock_server = ugv_mission.dock_server:main',
         ],
     },
 )

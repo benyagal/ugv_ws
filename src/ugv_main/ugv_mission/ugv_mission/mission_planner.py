@@ -7,12 +7,12 @@ empties the storage at a fixed unload pose when full, and drives to the
 pre-dock pose when the list is empty or the battery is low.
 
 States: IDLE, PAUSED, GOTO_APPROACH, FINAL_APPROACH, PICKUP, GOTO_UNLOAD,
-UNLOAD, GOTO_DOCK.
+UNLOAD, GOTO_DOCK, DOCKING, UNDOCKING.
 
 Placeholders (until implemented):
   - FINAL_APPROACH: no visual servo yet (/final_approach, plan 6.4), skipped.
-  - Docking: only Nav2 to `predock_pose`; /dock, /undock and charging
-    (plan 12.x) are not called. The mission ends there (IDLE).
+  - Charging: after /dock the mission ends (IDLE). The next start undocks
+    first if there are chickens left; no waiting for a full battery yet.
 
 Interfaces:
   sub  /dead_chicken/detections  geometry_msgs/PoseArray (map)
@@ -20,6 +20,7 @@ Interfaces:
   sub  /voltage                  std_msgs/Float32
   act  navigate_to_pose          nav2_msgs/NavigateToPose
   act  /gripper                  ugv_interface/Behavior (pickup / empty)
+  act  /dock                     ugv_interface/Behavior (dock / undock, dock_server.py)
   srv  /mission/start|pause|stop|reset  std_srvs/Trigger
   pub  /mission/status           std_msgs/String (JSON, 1 Hz)
 
@@ -88,6 +89,8 @@ class MissionPlanner(Node):
         self.gripper_timeout = p('gripper_timeout', 60.0).value
         self.storage_capacity = p('storage_capacity', 3).value
         self.dock_voltage = p('dock_voltage', 0.0).value
+        dock_action = p('dock_action', '/dock').value
+        self.dock_timeout = p('dock_timeout', 180.0).value
         any_type = ParameterDescriptor(dynamic_typing=True)
         self.unload_pose = self._pose_param(p('unload_pose', [], any_type).value, 'unload_pose')
         self.predock_pose = self._pose_param(p('predock_pose', [], any_type).value, 'predock_pose')
@@ -103,6 +106,7 @@ class MissionPlanner(Node):
         self._voltage = None
         self._low_since = None
         self._costmap = None
+        self._docked = False
         self._shutdown = False
 
         self.tf_buffer = Buffer()
@@ -111,6 +115,8 @@ class MissionPlanner(Node):
         cb = ReentrantCallbackGroup()
         self._nav = ActionClient(self, NavigateToPose, 'navigate_to_pose', callback_group=cb)
         self._gripper = ActionClient(self, Behavior, gripper_action, callback_group=cb)
+        self._dock = (ActionClient(self, Behavior, dock_action, callback_group=cb)
+                      if dock_action else None)
 
         self.create_subscription(PoseArray, detections_topic, self._on_detections, 10)
         self.create_subscription(Float32, 'voltage', self._on_voltage, 10)
@@ -243,6 +249,18 @@ class MissionPlanner(Node):
         self._mode = PAUSED
 
     def _step(self):
+        if self._docked:
+            if self._next_chicken() is None:
+                self.get_logger().info('Docked and the chicken list is empty -> mission finished')
+                self._mode = IDLE
+                return
+            self._state = 'UNDOCKING'
+            res = self._run_action(self._dock, Behavior.Goal(command='undock'),
+                                   self.dock_timeout, cancel_on_pause=True)
+            if res != 'ok':
+                self._error(f'undock {res}')
+                return
+            self._docked = False
         if self._storage >= self.storage_capacity:
             if not self._unload():
                 self._error(self._last_error or 'unload failed')
@@ -395,7 +413,16 @@ class MissionPlanner(Node):
             if res != 'ok':
                 self._error(f'navigation to predock_pose {res}')
                 return
-            # TODO (plan 12.5): /dock action + wait for charging + /undock.
+            if self._dock is not None:
+                self._state = 'DOCKING'
+                res = self._run_action(self._dock, Behavior.Goal(command='dock'),
+                                       self.dock_timeout, cancel_on_pause=True)
+                if res != 'ok':
+                    self._error(f'dock {res}')
+                    return
+                self._docked = True
+                self.get_logger().info('Docked, charging')
+            # TODO (plan 5.7): wait for a full battery and resume the mission.
         self.get_logger().info(f'Mission finished ({reason})')
         self._mode = IDLE
 
