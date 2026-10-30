@@ -118,13 +118,24 @@ def fence_x_positions():
     return max(x for x, _ in NEAR_FENCE_POINTS_M), BUILDING_LENGTH_M - END_WALKWAY_DEPTH_FAR_M
 
 
-def row_x_range():
-    fence_near_x, fence_far_x = fence_x_positions()
-    return fence_near_x + ROW_END_CLEARANCE_NEAR_M, fence_far_x - ROW_END_CLEARANCE_FAR_M
+def near_fence_x_at(y_m):
+    """Az origo feloli (tores) kerites X-e az adott Y-nal."""
+    xs = []
+    for (x0, y0), (x1, y1) in zip(NEAR_FENCE_POINTS_M, NEAR_FENCE_POINTS_M[1:]):
+        if min(y0, y1) <= y_m <= max(y0, y1):
+            xs.append(max(x0, x1) if y0 == y1 else x0 + (y_m - y0) / (y1 - y0) * (x1 - x0))
+    if not xs:
+        raise ValueError(f"Y={y_m} m-nel nincs origo feloli kerites (NEAR_FENCE_POINTS_M)")
+    return max(xs)
 
 
-def feeder_x_positions():
-    row_x_start, row_x_end = row_x_range()
+def row_x_range(y_m):
+    _, fence_far_x = fence_x_positions()
+    return near_fence_x_at(y_m) + ROW_END_CLEARANCE_NEAR_M, fence_far_x - ROW_END_CLEARANCE_FAR_M
+
+
+def feeder_x_positions(y_m):
+    row_x_start, row_x_end = row_x_range(y_m)
     positions = []
     x = row_x_start + FEEDER_FIRST_OFFSET_M
     while x <= row_x_end:
@@ -210,17 +221,17 @@ def build_grid():
     rect(fence_far_x - SIDE_FENCE_THICKNESS_M, 0, fence_far_x, BUILDING_WIDTH_M)
 
     row_y_positions = compute_row_y_positions()
-    row_x_start, row_x_end = row_x_range()
 
     for row_type, y_offset in zip(ROW_PATTERN, row_y_positions):
         y_m = y_offset
+        row_x_start, row_x_end = row_x_range(y_m)
         if row_type == "itato":
             half_t = DRINKER_LINE_THICKNESS_M / 2.0
             rect(row_x_start, y_m - half_t, row_x_end, y_m + half_t)
         elif row_type == "etetu":
             half_t = FEEDER_LINE_THICKNESS_M / 2.0
             rect(row_x_start, y_m - half_t, row_x_end, y_m + half_t)
-            for x in feeder_x_positions():
+            for x in feeder_x_positions(y_m):
                 ellipse(x, y_m, FEEDER_SIZE_ALONG_ROW_M, FEEDER_SIZE_ACROSS_ROW_M)
         else:
             raise ValueError(f"Ismeretlen sor tipus: {row_type}")

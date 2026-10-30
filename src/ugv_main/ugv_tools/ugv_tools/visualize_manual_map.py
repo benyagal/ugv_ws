@@ -75,20 +75,20 @@ def render():
     draw.rectangle([P(0, gm.BUILDING_WIDTH_M), P(gm.BUILDING_LENGTH_M, 0)], outline=WALL_COLOR, width=3)
 
     # vegfali dolgozoi folyoso keritesek
-    fence_near_x, fence_far_x = gm.fence_x_positions()
+    _, fence_far_x = gm.fence_x_positions()
     draw.line([P(x, y) for x, y in gm.NEAR_FENCE_POINTS_M], fill=FENCE_COLOR, width=3, joint="curve")
     draw.line([P(fence_far_x, 0), P(fence_far_x, gm.BUILDING_WIDTH_M)], fill=FENCE_COLOR, width=3)
 
     # sorok (a kerites es a sorok vege kozotti res: ROW_END_CLEARANCE_*, itt kel at a robot)
-    row_x_start, row_x_end = gm.row_x_range()
     row_y_positions = gm.compute_row_y_positions()
     for row_type, y_m in zip(gm.ROW_PATTERN, row_y_positions):
+        row_x_start, row_x_end = gm.row_x_range(y_m)
         color = DRINKER_COLOR if row_type == "itato" else FEEDER_COLOR
         draw.line([P(row_x_start, y_m), P(row_x_end, y_m)], fill=color, width=2)
         if row_type == "etetu":
             rx_px = gm.FEEDER_SIZE_ALONG_ROW_M / 2.0 / gm.RESOLUTION_M_PER_PX * SCALE
             ry_px = gm.FEEDER_SIZE_ACROSS_ROW_M / 2.0 / gm.RESOLUTION_M_PER_PX * SCALE
-            for x in gm.feeder_x_positions():
+            for x in gm.feeder_x_positions(y_m):
                 cx, cy = P(x, y_m)
                 draw.ellipse([cx - rx_px, cy - ry_px, cx + rx_px, cy + ry_px], outline=FEEDER_COLOR, width=2)
 
@@ -128,7 +128,7 @@ def render():
                    f"{gm.END_WALKWAY_DEPTH_FAR_M} m", font_small)
 
     # sorok tavolsaga (minden szomszedos par kozott)
-    x_dim2 = P(row_x_start, 0)[0] - 20
+    x_dim2 = P(min(gm.row_x_range(y)[0] for y in row_y_positions), 0)[0] - 20
     for y_lo, y_hi in zip(row_y_positions, row_y_positions[1:]):
         y_a, y_b = P(0, y_lo)[1], P(0, y_hi)[1]
         draw_dimension(draw, x_dim2, y_a, x_dim2, y_b, f"{y_hi - y_lo:.2f} m", font_small)
@@ -138,7 +138,8 @@ def render():
 
     # robot-atjaro res a kerites es a sorok vege kozott (mindket vegen)
     y_dim3 = P(0, row_y_positions[0])[1] - 25
-    draw_dimension(draw, P(fence_near_x, 0)[0], y_dim3, P(row_x_start, 0)[0], y_dim3,
+    row_x_start, row_x_end = gm.row_x_range(row_y_positions[0])
+    draw_dimension(draw, P(gm.near_fence_x_at(row_y_positions[0]), 0)[0], y_dim3, P(row_x_start, 0)[0], y_dim3,
                    f"{gm.ROW_END_CLEARANCE_NEAR_M} m atjaro", font_small)
     draw_dimension(draw, P(row_x_end, 0)[0], y_dim3, P(fence_far_x, 0)[0], y_dim3,
                    f"{gm.ROW_END_CLEARANCE_FAR_M} m atjaro", font_small)
@@ -146,7 +147,7 @@ def render():
     # etetu bura atmero (elso etetu sor elso bura melle irva)
     for row_type, y_m in zip(gm.ROW_PATTERN, row_y_positions):
         if row_type == "etetu":
-            cx, cy = P(row_x_start, y_m)
+            cx, cy = P(gm.row_x_range(y_m)[0], y_m)
             rx_px = gm.FEEDER_SIZE_ALONG_ROW_M / 2.0 / gm.RESOLUTION_M_PER_PX * SCALE
             draw.text((cx + rx_px + 6, cy - 8),
                       f"{gm.FEEDER_SIZE_ALONG_ROW_M * 100:.0f}x{gm.FEEDER_SIZE_ACROSS_ROW_M * 100:.0f} cm",
@@ -156,7 +157,7 @@ def render():
     # itato vastagsag (elso itato sor elejere irva)
     for row_type, y_m in zip(gm.ROW_PATTERN, row_y_positions):
         if row_type == "itato":
-            cx, cy = P(row_x_start, y_m)
+            cx, cy = P(gm.row_x_range(y_m)[0], y_m)
             draw.text((cx + 6, cy + 6), f"{gm.DRINKER_LINE_THICKNESS_M * 100:.0f} cm vastag", fill=DRINKER_COLOR, font=font_small)
             break
 
