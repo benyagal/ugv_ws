@@ -232,6 +232,39 @@ def s1_in_up_out_down(bot, up_delay=5.0):
     status_print("[CYCLE] INUP -> OUT -> DOWN complete")
 
 
+def s2_down_in_up_out(bot, up_delay=5.0):
+    """Pickup cycle that ends with the gripper UP so it does not drag on the
+    litter while driving: DOWN, then INUP, then OUT."""
+    status_print("[CYCLE] DOWN -> INUP -> OUT start")
+
+    if current_s23_angle == S2_DOWN:
+        # Remembered angle may be stale (e.g. node restarted while servos held UP).
+        bot.set_pwm_servo(2, 180 - S2_DOWN)
+        bot.set_pwm_servo(3, S2_DOWN)
+        status_print(f"[S2/S3] DOWN re-sent ({S2_DOWN}\u00b0)")
+        # Give the servos time to travel if they really were UP.
+        start = time.monotonic()
+        while time.monotonic() - start < 1.0 and not stop_event.is_set():
+            time.sleep(0.05)
+    else:
+        move_s2_s3(bot, S2_DOWN)
+    if stop_event.is_set():
+        status_print("[CYCLE] Cancelled")
+        return
+
+    s1_in_and_up(bot, up_delay=up_delay)
+    if stop_event.is_set():
+        status_print("[CYCLE] Cancelled")
+        return
+
+    s1_out(bot)
+    if stop_event.is_set():
+        status_print("[CYCLE] Cancelled")
+        return
+
+    status_print("[CYCLE] DOWN -> INUP -> OUT complete")
+
+
 def s1_out(bot):
     status_print(
         f"[S1] OUT: speed={S1_OUT_SPEED}, "
@@ -437,6 +470,7 @@ Commands:
   DOWN     S2 + S3 -> {S2_DOWN} degrees
   INUP     S1 IN for {S1_IN_TIME:.0f}s total, UP starts 5s in (grab + stow)
   INUPOUTDOWN  INUP, then OUT, then DOWN (full grab + drop cycle)
+  DOWNINUPOUT  DOWN, then INUP, then OUT (pickup, gripper stays UP)
 
   STOP     Cancel whatever is running right now (IN/OUT/UP/DOWN/PUSH/PULL)
            and hold S2/S3 at current position; also stops both relays
@@ -506,6 +540,9 @@ def main():
 
             elif command == "INUPOUTDOWN":
                 run_in_thread(s1_in_up_out_down, bot)
+
+            elif command == "DOWNINUPOUT":
+                run_in_thread(s2_down_in_up_out, bot)
 
             elif command == "STOP":
                 cancel_active()

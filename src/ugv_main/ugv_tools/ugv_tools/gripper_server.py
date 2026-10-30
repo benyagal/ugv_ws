@@ -2,7 +2,7 @@
 """Gripper ROS action server for the mission planner.
 
 Action: /gripper (ugv_interface/action/Behavior), goal.command:
-  pickup  -> gripper_repl INUPOUTDOWN (felvétel)
+  pickup  -> gripper_repl DOWNINUPOUT (felvétel, a gripper fent marad)
   empty   -> gripper_repl PUSHPULL    (tároló ürítés)
 Cancelling the goal = gripper_repl STOP. Service /gripper/stop (Trigger)
 does the same without needing the goal handle.
@@ -35,7 +35,7 @@ from ugv_interface.action import Behavior
 from ugv_tools import gripper_repl as hw
 
 COMMANDS = {
-    'pickup': lambda bot: hw.s1_in_up_out_down(bot),
+    'pickup': lambda bot: hw.s2_down_in_up_out(bot),
     'empty': lambda bot: hw.relay_push_pull(),
 }
 
