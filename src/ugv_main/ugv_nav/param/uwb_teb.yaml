@@ -93,6 +93,8 @@ controller_server:
     # upward only after confirming actual achieved rate with homotopy class
     # planning disabled.
     controller_frequency: 10.0
+    # Default is /odom, which nothing publishes in the UWB stack: shim and TEB saw 0 velocity.
+    odom_topic: /odometry/local
     min_x_velocity_threshold: 0.001
     min_y_velocity_threshold: 0.5
     min_theta_velocity_threshold: 0.001
@@ -123,11 +125,12 @@ controller_server:
       primary_controller: "teb_local_planner::TebLocalPlannerROS"
       angular_dist_threshold: 0.785
       forward_sampling_distance: 0.5
-      rotate_to_heading_angular_vel: 0.75
-      # The shim clamps to MEASURED vel + accel*dt: at 0.75 a stalled robot
-      # only ever got 0.075 rad/s (below breakaway). velocity_smoother
-      # (OPEN_LOOP) still enforces the real 0.75 rad/s^2 ramp downstream.
-      max_angular_accel: 3.0
+      rotate_to_heading_angular_vel: 1.0
+      # The shim clamps to MEASURED vel + accel*dt, so a stalled robot only
+      # ever got accel*dt (3.0 -> 0.3 rad/s, below litter breakaway). 10.0
+      # lets it ask for the full speed; velocity_smoother (OPEN_LOOP) still
+      # enforces the real rad/s^2 ramp downstream.
+      max_angular_accel: 10.0
       simulate_ahead_time: 1.0
       footprint_model.type: circular
       footprint_model.radius: 0.1
@@ -168,11 +171,14 @@ controller_server:
       # tightened: the reduced limits then read as sluggish, and the low
       # angular accel kept the drivetrain inside its ~30 duty deadband for
       # most of every turn's ramp-up.
-      max_vel_x: 0.225
-      max_vel_x_backwards: 0.15
-      max_vel_theta: 0.75
-      acc_lim_x: 0.45
-      acc_lim_theta: 0.75
+      # Farm values (2026-11): the lower ones did not turn the robot on litter.
+      max_vel_x: 0.4
+      max_vel_x_backwards: 0.25
+      max_vel_theta: 1.0
+      acc_lim_x: 0.6
+      acc_lim_theta: 1.0
+      # Default 1 let TEB freely mix in reversing arcs (car-like turns).
+      weight_kinematics_forward_drive: 100.0
 
 local_costmap:
   local_costmap:
@@ -272,7 +278,7 @@ behavior_server:
     # Recovery behaviours (Spin/BackUp) bypass the controller's own limits,
     # so they need matching reductions or they stay the most violent motion
     # the robot ever makes.
-    max_rotational_vel: 0.75
+    max_rotational_vel: 1.0
     min_rotational_vel: 0.3
     rotational_acc_lim: 1.5
 
@@ -297,9 +303,9 @@ velocity_smoother:
     # only place that also caps recovery behaviours and any manual publisher.
     # The old accel limits (2.5 / 3.2) were far above the planner's own and
     # therefore smoothed nothing at all.
-    max_velocity: [0.225, 0.0, 0.75]
-    min_velocity: [-0.15, 0.0, -0.75]
-    max_accel: [0.45, 0.0, 0.75]
+    max_velocity: [0.4, 0.0, 1.0]
+    min_velocity: [-0.25, 0.0, -1.0]
+    max_accel: [0.6, 0.0, 1.0]
     max_decel: [-0.75, 0.0, -1.5]
     odom_topic: "/odometry/local"
     odom_duration: 0.1
