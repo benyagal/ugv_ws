@@ -100,6 +100,12 @@ def generate_launch_description():
         description='ugv_driver: stop the motors when a commanded turn makes no rotation at full duty'
     )
 
+    arc_pivot_arg = DeclareLaunchArgument(
+        'arc_pivot',
+        default_value='true',
+        description='ugv_driver: turn in place when a commanded arc does not rotate the robot'
+    )
+
     robot_state_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(get_package_share_directory('ugv_description'), 'launch', 'display.launch.py')
@@ -153,6 +159,8 @@ def generate_launch_description():
                 LaunchConfiguration('use_gyro_angular_feedback'), value_type=bool),
             'stall_detection': ParameterValue(
                 LaunchConfiguration('stall_detection'), value_type=bool),
+            'arc_pivot': ParameterValue(
+                LaunchConfiguration('arc_pivot'), value_type=bool),
         }],
     )
 
@@ -385,6 +393,7 @@ def generate_launch_description():
         uwb_heading_correction_arg,
         use_gyro_angular_feedback_arg,
         stall_detection_arg,
+        arc_pivot_arg,
         robot_state_launch,
         bringup_node,
         imu_complementary_filter_node,

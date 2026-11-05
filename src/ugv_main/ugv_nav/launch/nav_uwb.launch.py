@@ -120,6 +120,12 @@ def generate_launch_description():
         description='ugv_driver: stop the motors when a commanded turn makes no rotation at full duty'
     )
 
+    arc_pivot_arg = DeclareLaunchArgument(
+        'arc_pivot',
+        default_value='true',
+        description='ugv_driver: turn in place when a commanded arc does not rotate the robot'
+    )
+
     # Sensors + IMU/UWB EKF localization (map->odom TF) + static map_server
     # (no AMCL - the map is only used here to feed the costmaps' static
     # layer, not for scan-matching localization). No LIDAR is started here.
@@ -137,6 +143,7 @@ def generate_launch_description():
             'uwb_heading_correction': LaunchConfiguration('uwb_heading_correction'),
             'use_gyro_angular_feedback': LaunchConfiguration('use_gyro_angular_feedback'),
             'stall_detection': LaunchConfiguration('stall_detection'),
+            'arc_pivot': LaunchConfiguration('arc_pivot'),
         }.items()
     )
 
@@ -151,6 +158,7 @@ def generate_launch_description():
         uwb_heading_correction_arg,
         use_gyro_angular_feedback_arg,
         stall_detection_arg,
+        arc_pivot_arg,
         localization_launch,
         OpaqueFunction(function=launch_navigation),
     ])

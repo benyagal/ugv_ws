@@ -112,6 +112,14 @@ STALL_SPEED_FRACTION = 0.25  # measured below this fraction of target = not rota
 STALL_MIN_TARGET = 0.1       # rad/s - ignore tiny angular targets
 STALL_TIME = 2.0             # seconds
 
+# ARC PIVOT: an arc (linear + angular) that does not turn the chassis is
+# driven as an in-place turn (linear dropped) until the planner stops asking
+# for that turn (|w| below STALL_MIN_TARGET or sign flip), i.e. the heading
+# is right and the robot then starts off straight. Stall detection only runs
+# on in-place turns, so it fires only if pivoting fails too.
+ARC_STUCK_FRACTION = 0.25    # measured below this fraction of target = arc not turning
+ARC_STUCK_TIME = 1.0         # seconds
+
 LOW_BATTERY_VOLTAGE = 9.0
 LOW_BATTERY_WARN_INTERVAL = 30.0  # seconds
 LOW_BATTERY_SOUND = '/home/ws/ugv_ws/src/ugv_main/ugv_bringup/ugv_bringup/low_battery.wav'
@@ -207,12 +215,15 @@ class UgvDriver(Node):
 
         self.use_gyro = self.declare_parameter('use_gyro_angular_feedback', True).value
         self.stall_detection = self.declare_parameter('stall_detection', True).value
+        self.arc_pivot = self.declare_parameter('arc_pivot', True).value
         self._imu_sum = 0.0
         self._imu_count = 0
         self._gyro_active = False
         self._sign_mismatch = 0
         self._stall_since = None
         self._stalled_sign = 0.0
+        self._arc_stuck_since = None
+        self._pivot_sign = 0.0
         self._last_battery_warn = -LOW_BATTERY_WARN_INTERVAL
 
         self.linear_ctrl = SpeedPIController(LINEAR_FF_SLOPE, LINEAR_FF_OFFSET, LINEAR_KP, LINEAR_KI)
@@ -336,6 +347,8 @@ class UgvDriver(Node):
             self._stalled_sign = 0.0
             self.get_logger().info("Stall cleared by new angular command - driving again")
 
+        target_linear = 0.0 if self.update_pivot(now, measured_angular, angular_closed) else self.target_linear
+
         # Full stop: cut the motors outright instead of letting the PI trim
         # brake against the measured speed.
         if self.target_linear == 0.0 and self.target_angular == 0.0:
@@ -346,7 +359,7 @@ class UgvDriver(Node):
             return
 
         # min(): a blocked robot with a forward command still needs the stiction offset.
-        lin_speed = abs(self.target_linear)
+        lin_speed = abs(target_linear)
         if closed_loop:
             lin_speed = min(lin_speed, abs(self.measured_linear))
         offset_scale = max(0.0, 1.0 - lin_speed / ANGULAR_FF_OFFSET_FADE_SPEED)
@@ -355,10 +368,12 @@ class UgvDriver(Node):
             self.target_angular, measured_angular, dt, angular_closed, offset_scale)
         # Angular first: a wound-up linear duty used to starve one side (pivot on one track).
         duty_lin = self.linear_ctrl.update(
-            self.target_linear, self.measured_linear, dt, closed_loop,
+            target_linear, self.measured_linear, dt, closed_loop,
             limit=DUTY_LIMIT - abs(duty_ang))
 
-        if self.stall_detection and self.detect_stall(now, duty_ang, measured_angular, angular_closed):
+        if not (self.stall_detection and target_linear == 0.0):
+            self._stall_since = None
+        elif self.detect_stall(now, duty_ang, measured_angular, angular_closed):
             self.linear_ctrl.reset()
             self.angular_ctrl.reset()
             self.car.set_motor(0, 0, 0, 0)
@@ -376,6 +391,39 @@ class UgvDriver(Node):
         right = -duty_lin - duty_ang
 
         self.car.set_motor(int(round(left)), int(round(left)), int(round(right)), int(round(right)))
+
+    def update_pivot(self, now, measured_angular, angular_closed):
+        """Return True while a non-turning arc is being driven as an in-place turn."""
+        target = self.target_angular
+        sign = 1.0 if target > 0 else -1.0
+        arc = (self.arc_pivot and angular_closed and self.target_linear != 0.0
+               and abs(target) >= STALL_MIN_TARGET)
+
+        if self._pivot_sign != 0.0:
+            if not arc or sign != self._pivot_sign:
+                self._pivot_sign = 0.0
+                # Integral wound up against the stuck turn would keep turning past the heading.
+                self.angular_ctrl.reset()
+                self.get_logger().info("In-place turn ended (turn command dropped) - driving on")
+                return False
+            return True
+
+        if not arc or measured_angular * sign >= ARC_STUCK_FRACTION * abs(target):
+            self._arc_stuck_since = None
+            return False
+        if self._arc_stuck_since is None:
+            self._arc_stuck_since = now
+            return False
+        if now - self._arc_stuck_since < ARC_STUCK_TIME:
+            return False
+
+        self._arc_stuck_since = None
+        self._pivot_sign = sign
+        self.linear_ctrl.reset()
+        self.get_logger().warn(
+            f"Arc not turning (target {target:+.2f}, measured {measured_angular:+.2f} rad/s "
+            f"for {ARC_STUCK_TIME:.0f}s) - turning in place")
+        return True
 
     def detect_stall(self, now, duty_ang, measured_angular, angular_closed):
         target = self.target_angular
