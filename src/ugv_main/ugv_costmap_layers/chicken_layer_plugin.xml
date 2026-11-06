@@ -2,4 +2,7 @@
   <class type="ugv_costmap_layers::ChickenLayer" base_class_type="nav2_costmap_2d::Layer">
     <description>Marks live chickens (geometry_msgs/PoseArray from the overhead cameras) near the robot.</description>
   </class>
+  <class type="ugv_costmap_layers::DockLayer" base_class_type="nav2_costmap_2d::Layer">
+    <description>Marks the charging dock as a fixed rectangle (centre pose + length/width).</description>
+  </class>
 </library>

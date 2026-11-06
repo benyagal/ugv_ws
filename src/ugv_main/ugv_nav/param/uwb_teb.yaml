@@ -193,10 +193,18 @@ local_costmap:
       height: 5
       resolution: 0.05
       robot_radius: 0.1
-      plugins: ["static_layer", "inflation_layer", "chicken_layer"]
+      plugins: ["static_layer", "dock_layer", "inflation_layer", "chicken_layer"]
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
         map_subscribe_transient_local: True
+      # Keep in sync with global_costmap.dock_layer.
+      dock_layer:
+        plugin: "ugv_costmap_layers::DockLayer"
+        frame: map
+        pose: [-0.406, -1.054, -174.1]
+        length: 0.75
+        width: 0.5
+        cost: 254
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
@@ -223,10 +231,21 @@ global_costmap:
       robot_radius: 0.1
       resolution: 0.05
       track_unknown_space: true
-      plugins: ["static_layer", "inflation_layer"]
+      plugins: ["static_layer", "dock_layer", "inflation_layer"]
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
         map_subscribe_transient_local: True
+      # Charging dock, 750 mm along the docking direction x 500 mm. Centre pose
+      # [x, y, yaw_deg] in map: docked base_footprint = predock_pose + 1.0 m
+      # along its yaw, robot centre 0.25 m from the dock's back end, so the dock
+      # centre = predock_pose + 0.875 m along yaw (mission.yaml predock_pose).
+      dock_layer:
+        plugin: "ugv_costmap_layers::DockLayer"
+        frame: map
+        pose: [-0.406, -1.054, -174.1]
+        length: 0.75
+        width: 0.5
+        cost: 254
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0

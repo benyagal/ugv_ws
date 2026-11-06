@@ -19,7 +19,7 @@ mission_planner:
     # [x, y, yaw_deg] in the map frame. Not set = unused (see mission_planner.py).
     # predock_pose: dock_server.dock_distance in front of the charger contacts, facing the charger.
     # unload_pose: [0.0, 0.0, 0.0]
-    # predock_pose: [0.0, 0.0, 0.0]
+    predock_pose: [0.464, -0.964, -174.1]  # measured 2026-11-06: undock from the charger + tf2_echo map base_footprint
 
     dock_action: /dock        # "" = stop at predock_pose without docking
     dock_timeout: 180.0       # s, per dock / undock call
