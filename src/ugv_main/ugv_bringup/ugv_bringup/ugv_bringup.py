@@ -13,18 +13,16 @@ from Rosmaster_Lib import Rosmaster
 # See /memories/repo/rosmaster_motor_controller.md for the full investigation.
 #
 # THIS NODE IS THE ONLY PROCESS ALLOWED TO READ THE BOARD'S SERIAL PORT.
-# Rosmaster_Lib's receive thread reads /dev/ttyUSB0 one byte at a time; a
+# Rosmaster_Lib's receive thread reads SERIAL_PORT one byte at a time; a
 # second process doing the same steals a random half of every frame from
 # this one, so both end up with mostly checksum-failed, silently dropped
 # packets. ugv_driver.py therefore opens the port write-only and gets its
 # closed-loop feedback from the motion_raw topic published below.
 CAR_TYPE = 4
 
-# Confirmed via `ls -l /dev/ttyUSB*` on the Jetson (2026-09-11) - the board has
-# no udev rule yet, so this is the raw USB-serial enumeration, NOT guaranteed
-# to stay ttyUSB0 if other USB-serial devices are plugged in a different order.
-# TODO: add a udev rule (see ldlidar.rules for the pattern) for a stable symlink.
-SERIAL_PORT = '/dev/ttyUSB0'
+# Stable udev symlink to the board's CH340: a USB hub reset (2026-11-06) moved
+# it from ttyUSB0 to ttyUSB1 while the old node still held ttyUSB0 open.
+SERIAL_PORT = '/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0'
 
 # Wheel-distance-per-encoder-pulse scale. The nominal numbers come from
 # Yahboom's OWN 330RPM motor spec (app_motion.h: DISTANCE_CIRCLE=0.204203m /

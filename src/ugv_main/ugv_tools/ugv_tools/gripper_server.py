@@ -43,7 +43,8 @@ COMMANDS = {
 class GripperServer(Node):
     def __init__(self):
         super().__init__('gripper_server')
-        port = self.declare_parameter('serial_port', '/dev/ttyUSB0').value
+        port = self.declare_parameter(
+            'serial_port', '/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0').value
 
         hw.setup_gpio()
         self.bot = Rosmaster(car_type=hw.CAR_TYPE, com=port)

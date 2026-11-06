@@ -40,7 +40,7 @@ except ImportError:
     print("Rosmaster_Lib not importable - install it first (see Rosmaster_install.txt)")
     sys.exit(1)
 
-CANDIDATE_PORTS = ['/dev/ttyUSB0', '/dev/myserial', '/dev/ttyACM0', '/dev/ttyTHS1']
+CANDIDATE_PORTS = ['/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0', '/dev/ttyUSB0', '/dev/myserial', '/dev/ttyACM0', '/dev/ttyTHS1']
 CAR_TYPE = 4
 POLL_PERIOD = 0.1  # seconds between get_motion_data() reads
 

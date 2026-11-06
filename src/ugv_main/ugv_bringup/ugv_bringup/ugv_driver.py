@@ -13,7 +13,7 @@ from Rosmaster_Lib import Rosmaster
 # /memories/repo/rosmaster_motor_controller.md for the investigation behind
 # these values.
 CAR_TYPE = 4
-SERIAL_PORT = '/dev/ttyUSB0'
+SERIAL_PORT = '/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0'
 
 # CUSTOM CLOSED-LOOP SPEED CONTROL (2026-09-15) - replaces set_car_motion().
 # The firmware's own speed PID was found to be fundamentally broken for our

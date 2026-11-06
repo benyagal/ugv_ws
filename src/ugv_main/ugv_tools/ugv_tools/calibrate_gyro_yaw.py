@@ -37,7 +37,7 @@ except ImportError:
     sys.exit(1)
 
 # Same candidates/car_type as test_rosmaster_board.py / ugv_driver.py.
-CANDIDATE_PORTS = ['/dev/ttyUSB0', '/dev/myserial', '/dev/ttyACM0', '/dev/ttyTHS1']
+CANDIDATE_PORTS = ['/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0', '/dev/ttyUSB0', '/dev/myserial', '/dev/ttyACM0', '/dev/ttyTHS1']
 CAR_TYPE = 4
 
 # (speed_rad_s, duration_s) per run - deliberately varied nominal rotation

@@ -22,7 +22,7 @@ from Rosmaster_Lib import Rosmaster
 # ============================================================
 
 CAR_TYPE = 4
-PORTS = ['/dev/ttyUSB0', '/dev/myserial', '/dev/ttyACM0', '/dev/ttyTHS1']
+PORTS = ['/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0', '/dev/ttyUSB0', '/dev/myserial', '/dev/ttyACM0', '/dev/ttyTHS1']
 
 # S1 continuous servo
 S1_IN_SPEED = 50

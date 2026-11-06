@@ -35,7 +35,7 @@ except ImportError:
     sys.exit(1)
 
 # Same candidates/car_type as test_rosmaster_board.py / ugv_driver.py.
-CANDIDATE_PORTS = ['/dev/ttyUSB0', '/dev/myserial', '/dev/ttyACM0', '/dev/ttyTHS1']
+CANDIDATE_PORTS = ['/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0', '/dev/ttyUSB0', '/dev/myserial', '/dev/ttyACM0', '/dev/ttyTHS1']
 CAR_TYPE = 4
 
 # Very low, closely-spaced speeds - 0.1-0.25 m/s all saturated to ~0.73-0.85

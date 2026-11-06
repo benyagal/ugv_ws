@@ -31,7 +31,7 @@ except ImportError:
 
 # Confirmed enumeration on the Jetson (2026-09-11): /dev/ttyUSB0, no udev rule.
 # Kept as a candidate list in case a udev symlink gets added later.
-CANDIDATE_PORTS = ['/dev/ttyUSB0', '/dev/myserial', '/dev/ttyACM0', '/dev/ttyTHS1']
+CANDIDATE_PORTS = ['/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0', '/dev/ttyUSB0', '/dev/myserial', '/dev/ttyACM0', '/dev/ttyTHS1']
 
 # Must match ugv_bringup.py/ugv_driver.py's CAR_TYPE - the firmware selects
 # its wheel-mixing algorithm from this value on every set_car_motion() call,
