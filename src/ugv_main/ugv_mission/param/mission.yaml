@@ -31,10 +31,10 @@ dock_server:
   ros__parameters:
     odom_frame: odom
     robot_base_frame: base_footprint
-    dock_distance: 1.5        # m, predock_pose -> charger contacts
+    dock_distance: 1.0        # m, predock_pose -> charger contacts
     max_overshoot: 0.25       # m, travel beyond dock_distance before the attempt fails
     fast_speed: 0.15          # m/s (slowest reliable speed on litter, plan 2.2)
-    slow_speed: 0.10          # m/s, last slow_distance (may stall on litter)
+    slow_speed: 0.15          # m/s, last slow_distance
     slow_distance: 0.5        # m
     heading_gain: 1.0         # rad/s per rad, heading hold before the slow zone only
     max_heading_rate: 0.3     # rad/s
@@ -45,6 +45,6 @@ dock_server:
     stuck_time: 3.0           # s without 2 cm progress = stuck
     retreat_distance: 0.5     # m, back-off before a retry
     attempts: 3
-    undock_distance: 0.6      # m, straight back off the charger
+    undock_distance: 1.0      # m, straight back off the charger
     undock_speed: 0.15        # m/s
     timeout: 120.0            # s, whole dock / undock

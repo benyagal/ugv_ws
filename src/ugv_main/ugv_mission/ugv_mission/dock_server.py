@@ -49,10 +49,10 @@ class DockServer(Node):
         p = self.declare_parameter
         self.odom_frame = p('odom_frame', 'odom').value
         self.base_frame = p('robot_base_frame', 'base_footprint').value
-        self.dock_distance = p('dock_distance', 1.5).value
+        self.dock_distance = p('dock_distance', 1.0).value
         self.max_overshoot = p('max_overshoot', 0.25).value
         self.fast_speed = p('fast_speed', 0.15).value
-        self.slow_speed = p('slow_speed', 0.10).value
+        self.slow_speed = p('slow_speed', 0.15).value
         self.slow_distance = p('slow_distance', 0.5).value
         self.heading_gain = p('heading_gain', 1.0).value
         self.max_heading_rate = p('max_heading_rate', 0.3).value
@@ -63,7 +63,7 @@ class DockServer(Node):
         self.stuck_time = p('stuck_time', 3.0).value
         self.retreat_distance = p('retreat_distance', 0.5).value
         self.attempts = p('attempts', 3).value
-        self.undock_distance = p('undock_distance', 0.6).value
+        self.undock_distance = p('undock_distance', 1.0).value
         self.undock_speed = p('undock_speed', 0.15).value
         self.timeout = p('timeout', 120.0).value
 
