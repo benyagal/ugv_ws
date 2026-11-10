@@ -124,6 +124,14 @@ LOW_BATTERY_VOLTAGE = 9.0
 LOW_BATTERY_WARN_INTERVAL = 30.0  # seconds
 LOW_BATTERY_SOUND = '/home/ws/ugv_ws/src/ugv_main/ugv_bringup/ugv_bringup/low_battery.wav'
 
+# Charger contact = resting voltage jumps by CHARGE_RISE (same as dock_server charge_rise);
+# a nearly full battery jumps less and is not detected.
+CHARGE_RISE = 0.3          # V
+CHARGE_HOLD = 1.0          # s, rise / drop must last this long
+CHARGE_START_DELAY = 30.0  # s, the charger starts charging this long after contact
+REST_SETTLE = 5.0          # s after the last drive command before the voltage counts as resting
+CHARGING_SOUND = '/home/ws/ugv_ws/src/ugv_main/ugv_bringup/ugv_bringup/charging.wav'
+
 
 class SpeedPIController:
     """Feedforward + PI trim controller for one motion axis (linear or
@@ -225,6 +233,13 @@ class UgvDriver(Node):
         self._arc_stuck_since = None
         self._pivot_sign = 0.0
         self._last_battery_warn = -LOW_BATTERY_WARN_INTERVAL
+        self._last_drive_time = time.monotonic()
+        self._rest_voltage = None
+        self._rise_since = None
+        self._contact_since = None
+        self._contact_max = 0.0
+        self._drop_since = None
+        self._charge_announced = False
 
         self.linear_ctrl = SpeedPIController(LINEAR_FF_SLOPE, LINEAR_FF_OFFSET, LINEAR_KP, LINEAR_KI)
         self.angular_ctrl = SpeedPIController(
@@ -263,6 +278,8 @@ class UgvDriver(Node):
         self.target_linear = msg.linear.x
         self.target_angular = msg.angular.z
         self.last_cmd_vel_time = time.monotonic()
+        if msg.linear.x != 0.0 or msg.angular.z != 0.0:
+            self._last_drive_time = self.last_cmd_vel_time
 
     def motion_raw_callback(self, msg):
         self.measured_linear = msg.linear.x * LINEAR_TELEMETRY_CORRECTION
@@ -478,17 +495,71 @@ class UgvDriver(Node):
     def voltage_callback(self, msg):
         voltage_value = msg.data
         now = time.monotonic()
-        if not 0.1 < voltage_value < LOW_BATTERY_VOLTAGE:
+        if voltage_value <= 0.1:
+            return
+        self.update_charging(voltage_value, now)
+        if voltage_value >= LOW_BATTERY_VOLTAGE:
             return
         if now - self._last_battery_warn < LOW_BATTERY_WARN_INTERVAL:
             return
         self._last_battery_warn = now
         self.get_logger().warn(f"Low battery: {voltage_value:.2f} V")
+        self.play_sound(LOW_BATTERY_SOUND)
+
+    def update_charging(self, v, now):
+        if self._contact_since is not None and self._last_drive_time > self._contact_since:
+            # Drove off. A short contact (dock push still going) keeps the old resting
+            # voltage; after charging the battery rests higher, so measure it again.
+            if self._charge_announced:
+                self._rest_voltage = None
+                self.get_logger().info("Left the charger")
+            self._contact_since = None
+
+        if self._contact_since is not None:
+            self._contact_max = max(self._contact_max, v)
+            if v > self._contact_max - CHARGE_RISE:
+                self._drop_since = None
+            elif self._drop_since is None:
+                self._drop_since = now
+            elif now - self._drop_since >= CHARGE_HOLD:
+                self.get_logger().info(f"Charger contact lost ({self._contact_max:.1f} -> {v:.1f} V)")
+                self._contact_since = None
+                self._rest_voltage = v
+                return
+            if not self._charge_announced and now - self._contact_since >= CHARGE_START_DELAY:
+                self._charge_announced = True
+                self.get_logger().info("Charging started")
+                self.play_sound(CHARGING_SOUND)
+            return
+
+        resting = now - self._last_drive_time >= REST_SETTLE
+        if self._rest_voltage is None:
+            if resting:
+                self._rest_voltage = v
+            return
+        if v < self._rest_voltage + CHARGE_RISE:
+            self._rise_since = None
+            if resting:
+                self._rest_voltage = v
+            return
+        if self._rise_since is None:
+            self._rise_since = now
+        elif now - self._rise_since >= CHARGE_HOLD:
+            self.get_logger().info(
+                f"Charger contact ({self._rest_voltage:.1f} -> {v:.1f} V), "
+                f"charging should start in {CHARGE_START_DELAY:.0f} s")
+            self._contact_since = self._rise_since
+            self._contact_max = v
+            self._drop_since = None
+            self._charge_announced = False
+            self._rise_since = None
+
+    def play_sound(self, path):
         try:
-            subprocess.Popen(['aplay', '-D', 'plughw:3,0', LOW_BATTERY_SOUND],
+            subprocess.Popen(['aplay', '-D', 'plughw:3,0', path],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except OSError as e:
-            self.get_logger().warn(f"Low battery sound failed: {e}")
+            self.get_logger().warn(f"Sound {path} failed: {e}")
 
 def main(args=None):
     rclpy.init(args=args)
