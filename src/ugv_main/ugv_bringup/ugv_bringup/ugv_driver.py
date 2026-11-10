@@ -131,6 +131,12 @@ CHARGE_HOLD = 1.0          # s, rise / drop must last this long
 CHARGE_START_DELAY = 30.0  # s, the charger starts charging this long after contact
 REST_SETTLE = 5.0          # s after the last drive command before the voltage counts as resting
 CHARGING_SOUND = '/home/ws/ugv_ws/src/ugv_main/ugv_bringup/ugv_bringup/charging.wav'
+# USB speaker by ALSA card name: its card index changes between boots (was 3, now 0).
+SOUND_DEVICE = 'plughw:CARD=Device,DEV=0'
+# Rosmaster board buzzer; distinct from the firmware's continuous low-battery beeping.
+CHARGE_BEEP_COUNT = 2
+CHARGE_BEEP_MS = 100
+CHARGE_BEEP_PERIOD = 0.3   # s
 
 
 class SpeedPIController:
@@ -240,6 +246,8 @@ class UgvDriver(Node):
         self._contact_max = 0.0
         self._drop_since = None
         self._charge_announced = False
+        self._beeps_left = 0
+        self._beep_timer = None
 
         self.linear_ctrl = SpeedPIController(LINEAR_FF_SLOPE, LINEAR_FF_OFFSET, LINEAR_KP, LINEAR_KI)
         self.angular_ctrl = SpeedPIController(
@@ -530,6 +538,7 @@ class UgvDriver(Node):
                 self._charge_announced = True
                 self.get_logger().info("Charging started")
                 self.play_sound(CHARGING_SOUND)
+                self.start_charge_beep()
             return
 
         resting = now - self._last_drive_time >= REST_SETTLE
@@ -554,9 +563,22 @@ class UgvDriver(Node):
             self._charge_announced = False
             self._rise_since = None
 
+    def start_charge_beep(self):
+        self._beeps_left = CHARGE_BEEP_COUNT
+        if self._beep_timer is None:
+            self._beep_timer = self.create_timer(CHARGE_BEEP_PERIOD, self.beep_tick)
+        else:
+            self._beep_timer.reset()
+
+    def beep_tick(self):
+        self.car.set_beep(CHARGE_BEEP_MS)
+        self._beeps_left -= 1
+        if self._beeps_left <= 0:
+            self._beep_timer.cancel()
+
     def play_sound(self, path):
         try:
-            subprocess.Popen(['aplay', '-D', 'plughw:3,0', path],
+            subprocess.Popen(['aplay', '-D', SOUND_DEVICE, path],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except OSError as e:
             self.get_logger().warn(f"Sound {path} failed: {e}")
