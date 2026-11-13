@@ -3,7 +3,8 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import Imu, JointState
-from std_msgs.msg import Float32, Float32MultiArray
+from rclpy.qos import DurabilityPolicy, QoSProfile
+from std_msgs.msg import Bool, Float32, Float32MultiArray
 import subprocess
 import time
 
@@ -274,6 +275,11 @@ class UgvDriver(Node):
         # Subscribe to voltage data (voltage topic)
         self.voltage_sub = self.create_subscription(Float32, 'voltage', self.voltage_callback, 10)
 
+        # Latched for oled_display, which may start after the last change.
+        self.charging_pub = self.create_publisher(
+            Bool, 'charging', QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
+        self.charging_pub.publish(Bool(data=False))
+
     # Callback for processing velocity commands - just records the latest
     # target; the actual motor control happens in control_loop() below.
     def cmd_vel_callback(self, msg):
@@ -521,6 +527,7 @@ class UgvDriver(Node):
             if self._charge_announced:
                 self._rest_voltage = None
                 self.get_logger().info("Left the charger")
+                self.charging_pub.publish(Bool(data=False))
             self._contact_since = None
 
         if self._contact_since is not None:
@@ -531,12 +538,15 @@ class UgvDriver(Node):
                 self._drop_since = now
             elif now - self._drop_since >= CHARGE_HOLD:
                 self.get_logger().info(f"Charger contact lost ({self._contact_max:.1f} -> {v:.1f} V)")
+                if self._charge_announced:
+                    self.charging_pub.publish(Bool(data=False))
                 self._contact_since = None
                 self._rest_voltage = v
                 return
             if not self._charge_announced and now - self._contact_since >= CHARGE_START_DELAY:
                 self._charge_announced = True
                 self.get_logger().info("Charging started")
+                self.charging_pub.publish(Bool(data=True))
                 self.play_sound(CHARGING_SOUND)
                 self.start_charge_beep()
             return

@@ -28,6 +28,7 @@ setup(
             'ugv_bringup = ugv_bringup.ugv_bringup:main',
             'ugv_driver = ugv_bringup.ugv_driver:main',
             'initialpose_bridge = ugv_bringup.initialpose_bridge:main',
+            'oled_display = ugv_bringup.oled_display:main',
         ],
     },
 )

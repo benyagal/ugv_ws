@@ -164,6 +164,12 @@ def generate_launch_description():
         }],
     )
 
+    oled_display_node = Node(
+        condition=IfCondition(LaunchConfiguration('start_base_stack')),
+        package='ugv_bringup',
+        executable='oled_display',
+    )
+
     base_node = Node(
         condition=IfCondition(LaunchConfiguration('start_base_stack')),
         package='ugv_base_node',
@@ -398,6 +404,7 @@ def generate_launch_description():
         bringup_node,
         imu_complementary_filter_node,
         driver_node,
+        oled_display_node,
         base_node,
         local_ekf_node,
         # UWB: simulator OR real hardware (mutually exclusive)
