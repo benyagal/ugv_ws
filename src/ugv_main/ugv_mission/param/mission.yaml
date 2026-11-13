@@ -36,15 +36,16 @@ dock_server:
     fast_speed: 0.15          # m/s (slowest reliable speed on litter, plan 2.2)
     slow_speed: 0.15          # m/s, last slow_distance
     slow_distance: 0.5        # m
+    retry_speed: 0.2          # m/s, whole drive-in from the 2nd attempt on: more push to seat on the contacts
     heading_gain: 1.0         # rad/s per rad, heading hold before the slow zone only
     max_heading_rate: 0.3     # rad/s
     baseline_time: 2.0        # s, standing still before the drive, resting voltage
-    charge_rise: 0.3          # V above the resting voltage = charging (MEASURE with the real charger)
-    charge_hold: 0.5          # s, rise must last this long while driving
-    confirm_time: 3.0         # s, standing check after stopping
+    charge_rise: 0.2          # V above the resting voltage = charging; standing vs standing, noise ~0.1 V (2026-11-13)
+    charge_hold: 0.5          # s, rise must last this long
+    confirm_time: 15.0        # s, max standing wait after stopping; the charger switches on with a delay after contact
     stuck_time: 3.0           # s without 2 cm progress = stuck
     retreat_distance: 0.5     # m, back-off before a retry
     attempts: 3
     undock_distance: 1.0      # m, straight back off the charger
     undock_speed: 0.15        # m/s
-    timeout: 120.0            # s, whole dock / undock
+    timeout: 150.0            # s, whole dock / undock (keep below mission_planner dock_timeout)

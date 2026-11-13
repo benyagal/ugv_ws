@@ -9,7 +9,7 @@
             Seen while driving -> stop and confirm standing still. Reached
             dock_distance + max_overshoot or stuck -> stop and check anyway
             (the charger may switch on with a delay). Not charging -> back off
-            retreat_distance and retry (attempts in total).
+            retreat_distance and retry at retry_speed (attempts in total).
   'undock'  Reverse undock_distance straight off the charger.
 
 The V-shaped guide on the charger removes the remaining lateral / heading
@@ -54,18 +54,19 @@ class DockServer(Node):
         self.fast_speed = p('fast_speed', 0.15).value
         self.slow_speed = p('slow_speed', 0.15).value
         self.slow_distance = p('slow_distance', 0.5).value
+        self.retry_speed = p('retry_speed', 0.2).value
         self.heading_gain = p('heading_gain', 1.0).value
         self.max_heading_rate = p('max_heading_rate', 0.3).value
         self.baseline_time = p('baseline_time', 2.0).value
-        self.charge_rise = p('charge_rise', 0.3).value
+        self.charge_rise = p('charge_rise', 0.2).value
         self.charge_hold = p('charge_hold', 0.5).value
-        self.confirm_time = p('confirm_time', 3.0).value
+        self.confirm_time = p('confirm_time', 15.0).value
         self.stuck_time = p('stuck_time', 3.0).value
         self.retreat_distance = p('retreat_distance', 0.5).value
         self.attempts = p('attempts', 3).value
         self.undock_distance = p('undock_distance', 1.0).value
         self.undock_speed = p('undock_speed', 0.15).value
-        self.timeout = p('timeout', 120.0).value
+        self.timeout = p('timeout', 150.0).value
 
         self._volts = deque(maxlen=2000)
         self._vlock = threading.Lock()
@@ -152,7 +153,7 @@ class DockServer(Node):
                                f'{base + self.charge_rise:.2f} V')
         deadline = time.monotonic() + self.timeout
         for attempt in range(1, self.attempts + 1):
-            reason = self._drive_in(start, base, deadline)
+            reason = self._drive_in(start, base, deadline, retry=attempt > 1)
             if reason == 'timeout':
                 break
             if self._confirm(base):
@@ -164,8 +165,10 @@ class DockServer(Node):
         self.get_logger().error('dock: failed')
         return False
 
-    def _drive_in(self, start, base, deadline):
+    def _drive_in(self, start, base, deadline, retry=False):
         """Forward until charging / end of travel / stuck / timeout."""
+        fast = self.retry_speed if retry else self.fast_speed
+        slow_v = self.retry_speed if retry else self.slow_speed
         rise_since = None
         best, best_t = None, time.monotonic()
         while True:
@@ -191,13 +194,27 @@ class DockServer(Node):
             slow = along >= self.dock_distance - self.slow_distance
             w = 0.0 if slow else max(-self.max_heading_rate,
                                      min(self.max_heading_rate, -self.heading_gain * yaw_err))
-            self._publish(self.slow_speed if slow else self.fast_speed, w)
+            self._publish(slow_v if slow else fast, w)
 
     def _confirm(self, base):
-        self._hold_still(1.0 + self.confirm_time)  # 1 s for the motor sag to recover
-        v = self._median_voltage(self.confirm_time)
-        self.get_logger().info(f'dock: standing voltage {v if v is None else round(v, 2)} V')
-        return v is not None and v >= base + self.charge_rise
+        """Stand still up to confirm_time; the charger switches on some seconds after contact."""
+        self._hold_still(1.0)  # motor sag recovers
+        start = time.monotonic()
+        rise_since = None
+        charging = False
+        v = None
+        while not charging and time.monotonic() - start < self.confirm_time:
+            self._hold_still(PERIOD)
+            now = time.monotonic()
+            v = self._median_voltage(1.0)
+            if v is not None and v >= base + self.charge_rise:
+                rise_since = rise_since or now
+                charging = now - rise_since >= self.charge_hold
+            else:
+                rise_since = None
+        self.get_logger().info(f'dock: standing voltage {v if v is None else round(v, 2)} V '
+                               f'after {time.monotonic() - start:.1f} s')
+        return charging
 
     def _back_off(self, start, deadline):
         along, _ = self._progress(start)
