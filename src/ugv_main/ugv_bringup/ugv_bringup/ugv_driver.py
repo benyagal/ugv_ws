@@ -106,12 +106,14 @@ SIGN_CHECK_CYCLES = 10      # consecutive control cycles (~1s)
 
 # STALL DETECTION (2026-10-02): turning commanded, angular duty near the limit,
 # but the chassis is not rotating for STALL_TIME -> stop the motors instead of
-# grinding them. Cleared by a zero / opposite-sign angular command or cmd_vel
-# timeout.
+# grinding them. Cleared by a zero / opposite-sign angular command, cmd_vel
+# timeout, or after STALL_HOLD_TIME (site bag 2026-11-11: Nav2 kept the same
+# turn command for 40s and the robot never retried).
 STALL_DUTY_FRACTION = 0.9    # |duty_ang| >= this * DUTY_LIMIT counts as saturated
 STALL_SPEED_FRACTION = 0.25  # measured below this fraction of target = not rotating
 STALL_MIN_TARGET = 0.1       # rad/s - ignore tiny angular targets
 STALL_TIME = 2.0             # seconds
+STALL_HOLD_TIME = 5.0        # seconds motors stay off before retrying
 
 # ARC PIVOT: an arc (linear + angular) that does not turn the chassis is
 # driven as an in-place turn (linear dropped) until the planner stops asking
@@ -237,6 +239,7 @@ class UgvDriver(Node):
         self._sign_mismatch = 0
         self._stall_since = None
         self._stalled_sign = 0.0
+        self._stalled_at = 0.0
         self._arc_stuck_since = None
         self._pivot_sign = 0.0
         self._last_battery_warn = -LOW_BATTERY_WARN_INTERVAL
@@ -372,11 +375,14 @@ class UgvDriver(Node):
         measured_angular, angular_closed = self.angular_feedback(now, closed_loop)
 
         if self._stalled_sign != 0.0:
-            if self.target_angular * self._stalled_sign > 0.0:
+            same_turn = self.target_angular * self._stalled_sign > 0.0
+            if same_turn and now - self._stalled_at < STALL_HOLD_TIME:
                 self.car.set_motor(0, 0, 0, 0)
                 return
             self._stalled_sign = 0.0
-            self.get_logger().info("Stall cleared by new angular command - driving again")
+            self.get_logger().info(
+                f"Stall hold of {STALL_HOLD_TIME:.0f}s over - retrying the turn" if same_turn
+                else "Stall cleared by new angular command - driving again")
 
         target_linear = 0.0 if self.update_pivot(now, measured_angular, angular_closed) else self.target_linear
 
@@ -476,11 +482,12 @@ class UgvDriver(Node):
 
         self._stall_since = None
         self._stalled_sign = sign
+        self._stalled_at = now
         source = "gyro" if self._gyro_active else "encoder"
         self.get_logger().error(
             f"STALL: target {target:+.2f} rad/s, angular duty {duty_ang:+.0f}, "
             f"measured ({source}) {measured_angular:+.2f} rad/s for {STALL_TIME:.0f}s - "
-            "motors stopped until a zero/opposite angular command or cmd_vel timeout."
+            f"motors stopped for {STALL_HOLD_TIME:.0f}s (or until a zero/opposite angular command)."
         )
         return True
 

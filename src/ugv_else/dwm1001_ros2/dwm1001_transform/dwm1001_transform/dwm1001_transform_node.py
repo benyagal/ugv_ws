@@ -85,10 +85,10 @@ class Dwm1001TransformNode(Node):
             self.get_logger().info(f"DWM position covariance: {covar_position}")
             # Initialize the covariance matrix, but only position will be set based on parameters
             self._covar = [0.0] * 36
-            # Assuming uncorrelated x,y,z
+            # Assuming uncorrelated x,y,z; 3x3 param -> diagonal of the 6x6 row-major pose covariance
             self._covar[0] = covar_position[0]  # x
-            self._covar[4] = covar_position[4]  # y
-            self._covar[8] = covar_position[8]  # z
+            self._covar[7] = covar_position[4]  # y
+            self._covar[14] = covar_position[8]  # z
         else:
             self.get_logger().info(f"No DWM1001 position covariance supplied.")
             self._covar = None
